@@ -1,0 +1,2498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LIMS - Laboratory Information Management System</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.1/cdn.min.js" defer></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        /* Login Page Styles */
+        .login-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .login-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            padding: 50px 40px;
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        .login-title {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            color: #4a5568;
+            font-weight: 300;
+        }
+
+        .login-subtitle {
+            color: #718096;
+            margin-bottom: 40px;
+            font-size: 1rem;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+            text-align: left;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #4a5568;
+            font-weight: 500;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 15px 20px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            background: white;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 20px;
+        }
+
+        .login-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        .login-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .error-message {
+            background: #fed7d7;
+            color: #c53030;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .success-message {
+            background: #c6f6d5;
+            color: #22543d;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        /* App Layout Styles */
+        .app-container {
+            display: none;
+            min-height: 100vh;
+            background: #f7fafc;
+        }
+
+        .app-header {
+            background: white;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 0 2rem;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            height: 70px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .app-logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #4a5568;
+        }
+
+        .user-menu {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #4a5568;
+        }
+
+        .logout-btn {
+            background: #e53e3e;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .logout-btn:hover {
+            background: #c53030;
+        }
+
+        .app-sidebar {
+            position: fixed;
+            left: 0;
+            top: 70px;
+            width: 250px;
+            height: calc(100vh - 70px);
+            background: white;
+            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+            padding: 2rem 0;
+            overflow-y: auto;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 2rem;
+            color: #4a5568;
+            text-decoration: none;
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+            cursor: pointer;
+        }
+
+        .nav-item:hover, .nav-item.active {
+            background: #edf2f7;
+            border-left-color: #667eea;
+            color: #667eea;
+        }
+
+        .app-main {
+            margin-left: 250px;
+            margin-top: 70px;
+            padding: 2rem;
+            min-height: calc(100vh - 70px);
+        }
+
+        .page-header {
+            margin-bottom: 2rem;
+        }
+
+        .page-title {
+            font-size: 2rem;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 0.5rem;
+        }
+
+        .page-subtitle {
+            color: #718096;
+        }
+
+        /* Cards and Tables */
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+            overflow: hidden;
+            margin-bottom: 2rem;
+        }
+
+        .card-header {
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid #e2e8f0;
+            background: #f8fafc;
+        }
+
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .card-content {
+            padding: 2rem;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.875rem;
+            margin: 2px;
+        }
+
+        .btn-sm {
+            padding: 4px 8px;
+            font-size: 0.75rem;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5a67d8;
+        }
+
+        .btn-secondary {
+            background: #edf2f7;
+            color: #4a5568;
+        }
+
+        .btn-secondary:hover {
+            background: #e2e8f0;
+        }
+
+        .btn-success {
+            background: #48bb78;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #38a169;
+        }
+
+        .btn-danger {
+            background: #e53e3e;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c53030;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .table th,
+        .table td {
+            text-align: left;
+            padding: 12px 16px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .table th {
+            background: #f8fafc;
+            font-weight: 600;
+            color: #4a5568;
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .table tbody tr:hover {
+            background: #f8fafc;
+        }
+
+        /* Status badges */
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .badge-success {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .badge-warning {
+            background: #fefcbf;
+            color: #744210;
+        }
+
+        .badge-danger {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        .badge-info {
+            background: #bee3f8;
+            color: #2a4365;
+        }
+
+        /* Stats Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+            border-left: 4px solid #667eea;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #2d3748;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-label {
+            color: #718096;
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* Modal Styles */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            max-width: 90%;
+            max-height: 90%;
+            overflow-y: auto;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+        }
+
+        .modal-header {
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #718096;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: background 0.2s;
+        }
+
+        .modal-close:hover {
+            background: #f7fafc;
+        }
+
+        .modal-body {
+            padding: 2rem;
+        }
+
+        .modal-footer {
+            padding: 1rem 2rem;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .form-row .form-group {
+            flex: 1;
+        }
+
+        /* Pagination */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+
+        .pagination-info {
+            color: #718096;
+            font-size: 0.875rem;
+        }
+
+        /* Loading states */
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 50%;
+            border-top-color: #667eea;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+
+        /* Search and filters */
+        .search-filters {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .search-filters .form-input {
+            padding: 10px 15px;
+        }
+
+        /* Empty states */
+        .empty-state {
+            text-align: center;
+            padding: 3rem 2rem;
+            color: #718096;
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        /* Hide/Show based on authentication */
+        .hidden { display: none !important; }
+        .show-when-authenticated { display: none; }
+        .authenticated .show-when-authenticated { display: block; }
+        .authenticated .hide-when-authenticated { display: none; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .app-sidebar {
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+            }
+            
+            .app-sidebar.open {
+                transform: translateX(0);
+            }
+            
+            .app-main {
+                margin-left: 0;
+            }
+            
+            .modal-content {
+                margin: 1rem;
+                max-width: calc(100% - 2rem);
+            }
+
+            .form-row {
+                flex-direction: column;
+            }
+
+            .search-filters {
+                flex-direction: column;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body x-data="limsApp()" x-init="init()" :class="{ 'authenticated': isAuthenticated }">
+    
+    <!-- Login Page -->
+    <div class="login-container hide-when-authenticated">
+        <div class="login-card">
+            <h1 class="login-title">LIMS</h1>
+            <p class="login-subtitle">Laboratory Information Management System</p>
+            
+            <div x-show="loginError" class="error-message" x-text="loginError"></div>
+            <div x-show="successMessage" class="success-message" x-text="successMessage"></div>
+            
+            <form @submit.prevent="login()">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" class="form-input" x-model="credentials.username" placeholder="Enter your username" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" class="form-input" x-model="credentials.password" placeholder="Enter your password" required>
+                </div>
+                
+                <button type="submit" class="login-btn" :disabled="isLogging">
+                    <span x-show="!isLogging">Sign In</span>
+                    <span x-show="isLogging">
+                        <i class="loading"></i> Signing In...
+                    </span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main Application -->
+    <div class="app-container show-when-authenticated">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="app-logo">
+                <i class="fas fa-flask"></i> LIMS
+            </div>
+            
+            <div class="user-menu">
+                <div class="user-info">
+                    <i class="fas fa-user-circle"></i>
+                    <span x-text="user?.username"></span>
+                    <span class="badge badge-info" x-text="user?.role"></span>
+                </div>
+                <button class="btn btn-secondary" @click="showChangeOwnPasswordModal = true" style="margin-right: 0.5rem;">
+                    <i class="fas fa-key"></i> Change Password
+                </button>
+                <button class="logout-btn" @click="logout()">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </button>
+            </div>
+        </header>
+
+        <!-- Sidebar -->
+        <nav class="app-sidebar" :class="{ 'open': sidebarOpen }">
+            <a href="#" class="nav-item" :class="{ 'active': currentPage === 'dashboard' }" @click="setPage('dashboard')">
+                <i class="fas fa-home"></i>
+                <span>Dashboard</span>
+            </a>
+            
+            <a href="#" class="nav-item" :class="{ 'active': currentPage === 'reagents' }" @click="setPage('reagents')">
+                <i class="fas fa-vial"></i>
+                <span>Reagents</span>
+            </a>
+
+            <a href="#" class="nav-item" :class="{ 'active': currentPage === 'reports' }" @click="setPage('reports')">
+                <i class="fas fa-chart-bar"></i>
+                <span>Reports</span>
+            </a>
+
+            <a href="#" class="nav-item" :class="{ 'active': currentPage === 'users' }" @click="setPage('users')" x-show="isAdmin()">
+                <i class="fas fa-users"></i>
+                <span>User Management</span>
+            </a>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="app-main">
+            <!-- Mobile menu button -->
+            <button class="btn btn-secondary" @click="sidebarOpen = !sidebarOpen" style="display: none;">
+                <i class="fas fa-bars"></i>
+            </button>
+
+            <!-- Dashboard Page -->
+            <div x-show="currentPage === 'dashboard'">
+                <div class="page-header">
+                    <h1 class="page-title">Dashboard</h1>
+                    <p class="page-subtitle">Overview of your laboratory inventory</p>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card" @click="setPage('reagents')">
+                        <div class="stat-value" x-text="stats.totalReagents || 0"></div>
+                        <div class="stat-label">Total Reagents</div>
+                    </div>
+                    
+                    <div class="stat-card" @click="setPage('reagents')">
+                        <div class="stat-value" x-text="stats.totalBatches || 0"></div>
+                        <div class="stat-label">Total Batches</div>
+                    </div>
+
+                    <div class="stat-card" @click="setPage('reports')">
+                        <div class="stat-value" x-text="stats.lowStock || 0"></div>
+                        <div class="stat-label">Low Stock Items</div>
+                    </div>
+
+                    <div class="stat-card" @click="setPage('reports')">
+                        <div class="stat-value" x-text="stats.expiringSoon || 0"></div>
+                        <div class="stat-label">Expiring Soon</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h2 class="card-title">Quick Actions</h2>
+                    </div>
+                    <div class="card-content">
+                        <button class="btn btn-primary" @click="setPage('reagents')" x-show="canCreateReagents()">
+                            <i class="fas fa-plus"></i> Add New Reagent
+                        </button>
+                        <button class="btn btn-secondary" @click="setPage('reports')">
+                            <i class="fas fa-chart-bar"></i> View Reports
+                        </button>
+                        <button class="btn btn-secondary" @click="setPage('users')" x-show="isAdmin()">
+                            <i class="fas fa-users"></i> Manage Users
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Reagents Page -->
+            <div x-show="currentPage === 'reagents'">
+                <div class="page-header">
+                    <h1 class="page-title">Reagents</h1>
+                    <p class="page-subtitle">Manage your laboratory reagents</p>
+                </div>
+
+                <div class="card" style="position: relative;">
+                    <div x-show="isLoading" class="loading-overlay">
+                        <div>
+                            <i class="loading"></i>
+                            <div style="margin-top: 0.5rem;">Loading...</div>
+                        </div>
+                    </div>
+
+                    <div class="card-header">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <h2 class="card-title">Reagent List</h2>
+                            <button class="btn btn-primary" x-show="canCreateReagents()" @click="showCreateReagentModal = true">
+                                <i class="fas fa-plus"></i> Add Reagent
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-content">
+                        <!-- Search and Filters -->
+                        <div class="search-filters">
+                            <input type="text" class="form-input" placeholder="Search reagents..." x-model="searchTerm" @input="debounceSearch()" style="flex: 1; min-width: 200px;">
+                            <select class="form-input" x-model="statusFilter" @change="loadReagents()" style="width: 150px;">
+                                <option value="">All Status</option>
+                                <option value="active">Active</option>
+                                <option value="inactive">Inactive</option>
+                                <option value="discontinued">Discontinued</option>
+                            </select>
+                        </div>
+
+                        <!-- Reagents Table -->
+                        <div x-show="!isLoading">
+                            <div x-show="reagents.length > 0" style="overflow-x: auto;">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Formula</th>
+                                            <th>CAS Number</th>
+                                            <th>Manufacturer</th>
+                                            <th>Status</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="reagent in reagents" :key="reagent.id">
+                                            <tr>
+                                                <td x-text="reagent.name"></td>
+                                                <td x-text="reagent.formula || '-'"></td>
+                                                <td x-text="reagent.cas_number || '-'"></td>
+                                                <td x-text="reagent.manufacturer || '-'"></td>
+                                                <td>
+                                                    <span class="badge" 
+                                                          :class="{
+                                                            'badge-success': reagent.status === 'active',
+                                                            'badge-warning': reagent.status === 'inactive',
+                                                            'badge-danger': reagent.status === 'discontinued'
+                                                          }"
+                                                          x-text="reagent.status">
+                                                    </span>
+                                                </td>
+                                                <td style="white-space: nowrap;">
+                                                    <button class="btn btn-secondary btn-sm" @click="viewReagent(reagent.id)" title="View Details">
+                                                        <i class="fas fa-eye"></i>
+                                                    </button>
+                                                    <button x-show="canEditReagents()" class="btn btn-primary btn-sm" @click="editReagent(reagent)" title="Edit">
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                    <button class="btn btn-danger btn-sm" @click="console.log('Delete clicked:', user); deleteUser(user)" title="Delete User">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <!-- Pagination -->
+                            <div x-show="pagination.total_pages > 1" class="pagination">
+                                <button class="btn btn-secondary btn-sm" :disabled="pagination.page <= 1" @click="loadPage(pagination.page - 1)">
+                                    <i class="fas fa-chevron-left"></i> Previous
+                                </button>
+                                <span class="pagination-info">
+                                    Page <span x-text="pagination.page"></span> of <span x-text="pagination.total_pages"></span>
+                                    (<span x-text="pagination.total"></span> total items)
+                                </span>
+                                <button class="btn btn-secondary btn-sm" :disabled="pagination.page >= pagination.total_pages" @click="loadPage(pagination.page + 1)">
+                                    Next <i class="fas fa-chevron-right"></i>
+                                </button>
+                            </div>
+
+                            <div x-show="reagents.length === 0" class="empty-state">
+                                <i class="fas fa-vial"></i>
+                                <h3>No reagents found</h3>
+                                <p>Try adjusting your search criteria or add a new reagent.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Reports Page -->
+            <div x-show="currentPage === 'reports'">
+                <div class="page-header">
+                    <h1 class="page-title">Reports</h1>
+                    <p class="page-subtitle">Inventory reports and analytics</p>
+                </div>
+
+                <!-- Low Stock Report -->
+                <div class="card" style="position: relative;">
+                    <div x-show="loadingLowStock" class="loading-overlay">
+                        <div>
+                            <i class="loading"></i>
+                            <div style="margin-top: 0.5rem;">Loading...</div>
+                        </div>
+                    </div>
+
+                    <div class="card-header">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <h2 class="card-title">Low Stock Items</h2>
+                            <button class="btn btn-primary" @click="loadLowStock()">
+                                <i class="fas fa-sync"></i> Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-content">
+                        <div x-show="!loadingLowStock">
+                            <div x-show="lowStockItems.length > 0" style="overflow-x: auto;">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Reagent</th>
+                                            <th>Batch</th>
+                                            <th>Quantity</th>
+                                            <th>Status</th>
+                                            <th>Expiry Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="item in lowStockItems" :key="item.batch_id">
+                                            <tr>
+                                                <td x-text="item.reagent_name"></td>
+                                                <td x-text="item.batch_number"></td>
+                                                <td>
+                                                    <span x-text="item.quantity"></span>
+                                                    <span x-text="item.unit"></span>
+                                                </td>
+                                                <td>
+                                                    <span class="badge badge-warning" x-text="item.status"></span>
+                                                </td>
+                                                <td x-text="item.expiry_date ? new Date(item.expiry_date).toLocaleDateString() : '-'"></td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <div x-show="lowStockItems.length === 0" class="empty-state">
+                                <i class="fas fa-check-circle"></i>
+                                <h3>All items are well stocked!</h3>
+                                <p>No low stock items found.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Expiring Items Report -->
+                <div class="card" style="position: relative;">
+                    <div x-show="loadingExpiring" class="loading-overlay">
+                        <div>
+                            <i class="loading"></i>
+                            <div style="margin-top: 0.5rem;">Loading...</div>
+                        </div>
+                    </div>
+
+                    <div class="card-header">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <h2 class="card-title">Expiring Soon</h2>
+                            <button class="btn btn-primary" @click="loadExpiringItems()">
+                                <i class="fas fa-sync"></i> Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-content">
+                        <div x-show="!loadingExpiring">
+                            <div x-show="expiringItems.length > 0" style="overflow-x: auto;">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Reagent</th>
+                                            <th>Batch</th>
+                                            <th>Quantity</th>
+                                            <th>Expiry Date</th>
+                                            <th>Days Left</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="item in expiringItems" :key="item.batch_id">
+                                            <tr>
+                                                <td x-text="item.reagent_name"></td>
+                                                <td x-text="item.batch_number"></td>
+                                                <td>
+                                                    <span x-text="item.quantity"></span>
+                                                    <span x-text="item.unit"></span>
+                                                </td>
+                                                <td x-text="new Date(item.expiry_date).toLocaleDateString()"></td>
+                                                <td>
+                                                    <span class="badge" 
+                                                          :class="{
+                                                            'badge-danger': item.days_until_expiry <= 7,
+                                                            'badge-warning': item.days_until_expiry > 7 && item.days_until_expiry <= 30
+                                                          }"
+                                                          x-text="item.days_until_expiry + ' days'">
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <div x-show="expiringItems.length === 0" class="empty-state">
+                                <i class="fas fa-calendar-check"></i>
+                                <h3>No items expiring soon</h3>
+                                <p>All items have sufficient shelf life remaining.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- User Management Page -->
+            <div x-show="currentPage === 'users' && isAdmin()">
+                <div class="page-header">
+                    <h1 class="page-title">User Management</h1>
+                    <p class="page-subtitle">Manage system users and permissions</p>
+                </div>
+
+                <div class="card" style="position: relative;">
+                    <div x-show="loadingUsers" class="loading-overlay">
+                        <div>
+                            <i class="loading"></i>
+                            <div style="margin-top: 0.5rem;">Loading...</div>
+                        </div>
+                    </div>
+
+                    <div class="card-header">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <h2 class="card-title">Users</h2>
+                            <button class="btn btn-primary" @click="showCreateUserModal = true">
+                                <i class="fas fa-plus"></i> Add User
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-content">
+                        <div x-show="!loadingUsers">
+                            <div x-show="users.length > 0" style="overflow-x: auto;">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Username</th>
+                                            <th>Email</th>
+                                            <th>Role</th>
+                                            <th>Status</th>
+                                            <th>Last Login</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="user in users" :key="user.id">
+                                            <tr>
+                                                <td x-text="user.username"></td>
+                                                <td x-text="user.email"></td>
+                                                <td>
+                                                    <span class="badge badge-info" x-text="user.role"></span>
+                                                </td>
+                                                <td>
+                                                    <span class="badge" 
+                                                          :class="{
+                                                            'badge-success': user.is_active,
+                                                            'badge-danger': !user.is_active
+                                                          }"
+                                                          x-text="user.is_active ? 'Active' : 'Inactive'">
+                                                    </span>
+                                                </td>
+                                                <td x-text="user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'"></td>
+                                                <td style="white-space: nowrap;">
+                                                    <button class="btn btn-primary btn-sm" @click="editUser(user)" title="Edit User">
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                    <button class="btn btn-secondary btn-sm" @click="changeUserPassword(user)" title="Change Password">
+                                                        <i class="fas fa-key"></i>
+                                                    </button>
+                                                    <button class="btn btn-warning btn-sm" @click="toggleUserStatus(user)" :title="user.is_active ? 'Deactivate' : 'Activate'">
+                                                        <i :class="user.is_active ? 'fas fa-user-slash' : 'fas fa-user-check'"></i>
+                                                    </button>
+                                                    <button class="btn btn-danger btn-sm" @click="deleteUser(user)" title="Delete User">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div x-show="users.length === 0" class="empty-state">
+                                <i class="fas fa-users"></i>
+                                <h3>No users found</h3>
+                                <p>Add users to manage system access.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Create Reagent Modal -->
+    <div x-show="showCreateReagentModal" class="modal" @click.self="showCreateReagentModal = false">
+        <div class="modal-content" style="width: 600px;">
+            <div class="modal-header">
+                <h3 class="modal-title">Add New Reagent</h3>
+                <button class="modal-close" @click="showCreateReagentModal = false">&times;</button>
+            </div>
+            <form @submit.prevent="createReagent()">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Name *</label>
+                        <input type="text" class="form-input" x-model="newReagent.name" required>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Formula</label>
+                            <input type="text" class="form-input" x-model="newReagent.formula">
+                        </div>
+                        <div class="form-group">
+                            <label>CAS Number</label>
+                            <input type="text" class="form-input" x-model="newReagent.cas_number">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Manufacturer</label>
+                        <input type="text" class="form-input" x-model="newReagent.manufacturer">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea class="form-input" x-model="newReagent.description" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @click="showCreateReagentModal = false">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="creatingReagent">
+                        <span x-show="!creatingReagent">Create Reagent</span>
+                        <span x-show="creatingReagent"><i class="loading"></i> Creating...</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit Reagent Modal -->
+    <div x-show="showEditReagentModal" class="modal" @click.self="showEditReagentModal = false">
+        <div class="modal-content" style="width: 600px;">
+            <div class="modal-header">
+                <h3 class="modal-title">Edit Reagent</h3>
+                <button class="modal-close" @click="showEditReagentModal = false">&times;</button>
+            </div>
+            <form @submit.prevent="updateReagent()">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Name *</label>
+                        <input type="text" class="form-input" x-model="editingReagent.name" required>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Formula</label>
+                            <input type="text" class="form-input" x-model="editingReagent.formula">
+                        </div>
+                        <div class="form-group">
+                            <label>CAS Number</label>
+                            <input type="text" class="form-input" x-model="editingReagent.cas_number">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Manufacturer</label>
+                        <input type="text" class="form-input" x-model="editingReagent.manufacturer">
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Status</label>
+                            <select class="form-input" x-model="editingReagent.status">
+                                <option value="active">Active</option>
+                                <option value="inactive">Inactive</option>
+                                <option value="discontinued">Discontinued</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea class="form-input" x-model="editingReagent.description" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @click="showEditReagentModal = false">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="updatingReagent">
+                        <span x-show="!updatingReagent">Update Reagent</span>
+                        <span x-show="updatingReagent"><i class="loading"></i> Updating...</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Reagent Detail Modal -->
+    <div x-show="showReagentDetailModal" class="modal" @click.self="showReagentDetailModal = false">
+        <div class="modal-content" style="width: 900px; max-width: 95vw;">
+            <div class="modal-header">
+                <h3 class="modal-title" x-text="'Reagent: ' + (selectedReagent?.name || '')"></h3>
+                <button class="modal-close" @click="showReagentDetailModal = false">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div x-show="loadingReagentDetail" style="text-align: center; padding: 2rem;">
+                    <i class="loading"></i> Loading reagent details...
+                </div>
+                
+                <div x-show="!loadingReagentDetail && selectedReagent">
+                    <!-- Reagent Info -->
+                    <div class="card" style="margin-bottom: 1rem;">
+                        <div class="card-header">
+                            <h4 class="card-title">Reagent Information</h4>
+                        </div>
+                        <div class="card-content">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label><strong>Name</strong></label>
+                                    <div x-text="selectedReagent?.name"></div>
+                                </div>
+                                <div class="form-group">
+                                    <label><strong>Formula</strong></label>
+                                    <div x-text="selectedReagent?.formula || '-'"></div>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label><strong>CAS Number</strong></label>
+                                    <div x-text="selectedReagent?.cas_number || '-'"></div>
+                                </div>
+                                <div class="form-group">
+                                    <label><strong>Manufacturer</strong></label>
+                                    <div x-text="selectedReagent?.manufacturer || '-'"></div>
+                                </div>
+                            </div>
+                            <div class="form-group" x-show="selectedReagent?.description">
+                                <label><strong>Description</strong></label>
+                                <div x-text="selectedReagent?.description"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Batches -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <h4 class="card-title">Batches</h4>
+                                <button class="btn btn-primary btn-sm" x-show="canCreateBatches()" @click="showCreateBatchModal = true">
+                                    <i class="fas fa-plus"></i> Add Batch
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-content">
+                            <div x-show="selectedReagent?.batches?.length > 0" style="overflow-x: auto;">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Batch Number</th>
+                                            <th>Quantity</th>
+                                            <th>Status</th>
+                                            <th>Expiry Date</th>
+                                            <th>Location</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="batch in selectedReagent?.batches" :key="batch.id">
+                                            <tr>
+                                                <td x-text="batch.batch_number"></td>
+                                                <td>
+                                                    <span x-text="batch.quantity"></span>
+                                                    <span x-text="batch.unit"></span>
+                                                </td>
+                                                <td>
+                                                    <span class="badge" 
+                                                          :class="{
+                                                            'badge-success': batch.status === 'available',
+                                                            'badge-info': batch.status === 'in_use',
+                                                            'badge-danger': batch.status === 'expired' || batch.status === 'depleted'
+                                                          }"
+                                                          x-text="batch.status">
+                                                    </span>
+                                                </td>
+                                                <td x-text="batch.expiry_date ? new Date(batch.expiry_date).toLocaleDateString() : '-'"></td>
+                                                <td x-text="batch.location || '-'"></td>
+                                                <td style="white-space: nowrap;">
+                                                    <button class="btn btn-success btn-sm" x-show="batch.status === 'available'" @click="showUseBatchModal(batch)" title="Use Reagent">
+                                                        <i class="fas fa-flask"></i>
+                                                    </button>
+                                                    <button class="btn btn-secondary btn-sm" @click="viewBatchUsage(batch.id)" title="Usage History">
+                                                        <i class="fas fa-history"></i>
+                                                    </button>
+                                                    <button x-show="canEditBatches()" class="btn btn-primary btn-sm" @click="editBatch(batch)" title="Edit Batch">
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                    <button x-show="canDeleteBatches()" class="btn btn-danger btn-sm" @click="deleteBatch(batch.id)" title="Delete Batch">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <div x-show="!selectedReagent?.batches?.length" class="empty-state">
+                                <i class="fas fa-box"></i>
+                                <h4>No batches found</h4>
+                                <p>Add batches to track inventory for this reagent.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showReagentDetailModal = false">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Batch Modal -->
+    <div x-show="showCreateBatchModal" class="modal" @click.self="showCreateBatchModal = false">
+        <div class="modal-content" style="width: 600px;">
+            <div class="modal-header">
+                <h3 class="modal-title">Add New Batch</h3>
+                <button class="modal-close" @click="showCreateBatchModal = false">&times;</button>
+            </div>
+            <form @submit.prevent="createBatch()">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Batch Number *</label>
+                        <input type="text" class="form-input" x-model="newBatch.batch_number" required>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Quantity *</label>
+                            <input type="number" step="0.01" min="0" class="form-input" x-model="newBatch.quantity" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Unit *</label>
+                            <select class="form-input" x-model="newBatch.unit" required>
+                                <option value="">Select unit</option>
+                                <option value="g">Grams (g)</option>
+                                <option value="kg">Kilograms (kg)</option>
+                                <option value="mg">Milligrams (mg)</option>
+                                <option value="ml">Milliliters (ml)</option>
+                                <option value="l">Liters (l)</option>
+                                <option value="pieces">Pieces</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Supplier</label>
+                            <input type="text" class="form-input" x-model="newBatch.supplier">
+                        </div>
+                        <div class="form-group">
+                            <label>Manufacturer</label>
+                            <input type="text" class="form-input" x-model="newBatch.manufacturer">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Received Date</label>
+                            <input type="date" class="form-input" x-model="newBatch.received_date">
+                        </div>
+                        <div class="form-group">
+                            <label>Expiry Date</label>
+                            <input type="date" class="form-input" x-model="newBatch.expiry_date">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Location</label>
+                        <input type="text" class="form-input" x-model="newBatch.location" placeholder="Storage location">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Notes</label>
+                        <textarea class="form-input" x-model="newBatch.notes" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @click="showCreateBatchModal = false">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="creatingBatch">
+                        <span x-show="!creatingBatch">Create Batch</span>
+                        <span x-show="creatingBatch"><i class="loading"></i> Creating...</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit Batch Modal -->
+    <div x-show="showEditBatchModal" class="modal" @click.self="showEditBatchModal = false">
+        <div class="modal-content" style="width: 600px;">
+            <div class="modal-header">
+                <h3 class="modal-title">Edit Batch</h3>
+                <button class="modal-close" @click="showEditBatchModal = false">&times;</button>
+            </div>
+            <form @submit.prevent="updateBatch()">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Batch Number *</label>
+                        <input type="text" class="form-input" x-model="editingBatch.batch_number" required>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Quantity *</label>
+                            <input type="number" step="0.01" min="0" class="form-input" x-model="editingBatch.quantity" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Unit *</label>
+                            <select class="form-input" x-model="editingBatch.unit" required>
+                                <option value="">Select unit</option>
+                                <option value="g">Grams (g)</option>
+                                <option value="kg">Kilograms (kg)</option>
+                                <option value="mg">Milligrams (mg)</option>
+                                <option value="ml">Milliliters (ml)</option>
+                                <option value="l">Liters (l)</option>
+                                <option value="pieces">Pieces</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Supplier</label>
+                            <input type="text" class="form-input" x-model="editingBatch.supplier">
+                        </div>
+                        <div class="form-group">
+                            <label>Manufacturer</label>
+                            <input type="text" class="form-input" x-model="editingBatch.manufacturer">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Received Date</label>
+                            <input type="date" class="form-input" x-model="editingBatch.received_date">
+                        </div>
+                        <div class="form-group">
+                            <label>Expiry Date</label>
+                            <input type="date" class="form-input" x-model="editingBatch.expiry_date">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Status</label>
+                            <select class="form-input" x-model="editingBatch.status">
+                                <option value="available">Available</option>
+                                <option value="in_use">In Use</option>
+                                <option value="expired">Expired</option>
+                                <option value="depleted">Depleted</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Location</label>
+                            <input type="text" class="form-input" x-model="editingBatch.location" placeholder="Storage location">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Notes</label>
+                        <textarea class="form-input" x-model="editingBatch.notes" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @click="showEditBatchModal = false">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="updatingBatch">
+                        <span x-show="!updatingBatch">Update Batch</span>
+                        <span x-show="updatingBatch"><i class="loading"></i> Updating...</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Use Batch Modal -->
+    <div x-show="showUseBatchModalFlag" class="modal" @click.self="showUseBatchModalFlag = false">
+        <div class="modal-content" style="width: 500px;">
+            <div class="modal-header">
+                <h3 class="modal-title">Use Reagent</h3>
+                <button class="modal-close" @click="showUseBatchModalFlag = false">&times;</button>
+            </div>
+            <form @submit.prevent="useReagent()">
+                <div class="modal-body">
+                    <div x-show="selectedBatch" style="background: #f8fafc; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+                        <p><strong>Reagent:</strong> <span x-text="selectedReagent?.name"></span></p>
+                        <p><strong>Batch:</strong> <span x-text="selectedBatch?.batch_number"></span></p>
+                        <p><strong>Available:</strong> <span x-text="selectedBatch?.quantity"></span> <span x-text="selectedBatch?.unit"></span></p>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Quantity to Use *</label>
+                        <input type="number" step="0.01" min="0" class="form-input" x-model="usageData.quantity_used" 
+                               :max="selectedBatch?.quantity" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Purpose</label>
+                        <input type="text" class="form-input" x-model="usageData.purpose" placeholder="What is this being used for?">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Notes</label>
+                        <textarea class="form-input" x-model="usageData.notes" rows="3" placeholder="Additional notes"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @click="showUseBatchModalFlag = false">Cancel</button>
+                    <button type="submit" class="btn btn-success" :disabled="usingReagent">
+                        <span x-show="!usingReagent">Record Usage</span>
+                        <span x-show="usingReagent"><i class="loading"></i> Recording...</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Usage History Modal -->
+    <div x-show="showUsageHistoryModal" class="modal" @click.self="showUsageHistoryModal = false">
+        <div class="modal-content" style="width: 700px;">
+            <div class="modal-header">
+                <h3 class="modal-title">Usage History</h3>
+                <button class="modal-close" @click="showUsageHistoryModal = false">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div x-show="loadingUsageHistory" style="text-align: center; padding: 2rem;">
+                    <i class="loading"></i> Loading usage history...
+                </div>
+                
+                <div x-show="!loadingUsageHistory">
+                    <div x-show="usageHistory.length > 0" style="overflow-x: auto;">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>User</th>
+                                    <th>Quantity Used</th>
+                                    <th>Purpose</th>
+                                    <th>Notes</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="usage in usageHistory" :key="usage.id">
+                                    <tr>
+                                        <td x-text="new Date(usage.used_at).toLocaleString()"></td>
+                                        <td x-text="usage.user_id || 'System'"></td>
+                                        <td x-text="usage.quantity_used + ' ' + (selectedBatch?.unit || '')"></td>
+                                        <td x-text="usage.purpose || '-'"></td>
+                                        <td x-text="usage.notes || '-'"></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div x-show="usageHistory.length === 0" class="empty-state">
+                        <i class="fas fa-clipboard-list"></i>
+                        <h4>No usage history found</h4>
+                        <p>This batch has not been used yet.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showUsageHistoryModal = false">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create User Modal -->
+    <div x-show="showCreateUserModal" class="modal" @click.self="showCreateUserModal = false">
+        <div class="modal-content" style="width: 500px;">
+            <div class="modal-header">
+                <h3 class="modal-title">Add New User</h3>
+                <button class="modal-close" @click="showCreateUserModal = false">&times;</button>
+            </div>
+            <form @submit.prevent="createUser()">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Username *</label>
+                        <input type="text" class="form-input" x-model="newUser.username" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Email *</label>
+                        <input type="email" class="form-input" x-model="newUser.email" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Password *</label>
+                        <input type="password" class="form-input" x-model="newUser.password" required minlength="8">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Role *</label>
+                        <select class="form-input" x-model="newUser.role" required>
+                            <option value="">Select Role</option>
+                            <option value="admin">Admin</option>
+                            <option value="researcher">Researcher</option>
+                            <option value="viewer">Viewer</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @click="showCreateUserModal = false">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="creatingUser">
+                        <span x-show="!creatingUser">Create User</span>
+                        <span x-show="creatingUser"><i class="loading"></i> Creating...</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit User Modal -->
+    <div x-show="showEditUserModal" class="modal" @click.self="showEditUserModal = false">
+        <div class="modal-content" style="width: 500px;">
+            <div class="modal-header">
+                <h3 class="modal-title">Edit User</h3>
+                <button class="modal-close" @click="showEditUserModal = false">&times;</button>
+            </div>
+            <form @submit.prevent="updateUser()">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" class="form-input" x-model="editingUser.username" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" class="form-input" x-model="editingUser.email" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Role *</label>
+                        <select class="form-input" x-model="editingUser.role" required>
+                            <option value="admin">Admin</option>
+                            <option value="researcher">Researcher</option>
+                            <option value="viewer">Viewer</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Status</label>
+                        <select class="form-input" x-model="editingUser.is_active">
+                            <option :value="true">Active</option>
+                            <option :value="false">Inactive</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @click="showEditUserModal = false">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="updatingUser">
+                        <span x-show="!updatingUser">Update User</span>
+                        <span x-show="updatingUser"><i class="loading"></i> Updating...</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+<!-- Change Own Password Modal -->
+<div x-show="showChangeOwnPasswordModal" class="modal" @click.self="showChangeOwnPasswordModal = false">
+    <div class="modal-content" style="width: 500px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Change Your Password</h3>
+            <button class="modal-close" @click="showChangeOwnPasswordModal = false">&times;</button>
+        </div>
+        <form @submit.prevent="changeOwnPassword()">
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Current Password *</label>
+                    <input type="password" class="form-input" x-model="ownPasswordChange.currentPassword" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>New Password *</label>
+                    <input type="password" class="form-input" x-model="ownPasswordChange.newPassword" required minlength="8">
+                </div>
+                
+                <div class="form-group">
+                    <label>Confirm New Password *</label>
+                    <input type="password" class="form-input" x-model="ownPasswordChange.confirmPassword" required minlength="8">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" @click="showChangeOwnPasswordModal = false">Cancel</button>
+                <button type="submit" class="btn btn-primary" :disabled="changingOwnPassword">
+                    <span x-show="!changingOwnPassword">Change Password</span>
+                    <span x-show="changingOwnPassword"><i class="loading"></i> Changing...</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+    <script>
+        function limsApp() {
+            return {
+                // Authentication state
+                isAuthenticated: false,
+                isLogging: false,
+                loginError: '',
+                successMessage: '',
+                token: '',
+                user: null,
+                
+                // App state
+                currentPage: 'dashboard',
+                searchTerm: '',
+                statusFilter: '',
+                searchTimeout: null,
+                sidebarOpen: false,
+                
+                // Modal states
+                showCreateReagentModal: false,
+                showEditReagentModal: false,
+                showReagentDetailModal: false,
+                showCreateBatchModal: false,
+                showEditBatchModal: false,
+                showUseBatchModalFlag: false,
+                showUsageHistoryModal: false,
+                showCreateUserModal: false,
+                showEditUserModal: false,
+                showChangeOwnPasswordModal: false,
+                changingOwnPassword: false,
+                
+                // Loading states
+                isLoading: false,
+                creatingReagent: false,
+                updatingReagent: false,
+                loadingReagentDetail: false,
+                creatingBatch: false,
+                updatingBatch: false,
+                usingReagent: false,
+                loadingLowStock: false,
+                loadingExpiring: false,
+                loadingUsageHistory: false,
+                loadingUsers: false,
+                creatingUser: false,
+                updatingUser: false,
+                
+                // Data
+                reagents: [],
+                stats: {},
+                pagination: {
+                    page: 1,
+                    per_page: 20,
+                    total: 0,
+                    total_pages: 0
+                },
+                lowStockItems: [],
+                expiringItems: [],
+                usageHistory: [],
+                users: [],
+                
+                // Selected items
+                selectedReagent: null,
+                selectedBatch: null,
+                
+                // Form data
+                credentials: {
+                    username: '',
+                    password: ''
+                },
+                newReagent: {
+                    name: '',
+                    formula: '',
+                    cas_number: '',
+                    manufacturer: '',
+                    description: ''
+                },
+                editingReagent: {},
+                newBatch: {
+                    batch_number: '',
+                    quantity: '',
+                    unit: '',
+                    supplier: '',
+                    manufacturer: '',
+                    received_date: '',
+                    expiry_date: '',
+                    location: '',
+                    notes: ''
+                },
+                editingBatch: {},
+                usageData: {
+                    quantity_used: '',
+                    purpose: '',
+                    notes: ''
+                },
+                newUser: {
+                    username: '',
+                    email: '',
+                    password: '',
+                    role: ''
+                },
+                editingUser: {},
+                ownPasswordChange: {
+                    currentPassword: '',
+                    newPassword: '',
+                    confirmPassword: ''
+                },
+
+                async init() {
+                    const savedToken = localStorage.getItem('lims_token');
+                    const savedUser = localStorage.getItem('lims_user');
+                    
+                    if (savedToken && savedUser) {
+                        this.token = savedToken;
+                        this.user = JSON.parse(savedUser);
+                        this.isAuthenticated = true;
+                        await this.loadDashboardData();
+                    }
+                },
+
+                async login() {
+                    this.isLogging = true;
+                    this.loginError = '';
+                    this.successMessage = '';
+
+                    try {
+                        const response = await fetch('/auth/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.credentials)
+                        });
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (data.success && data.data) {
+                                this.token = data.data.token;
+                                this.user = data.data.user;
+                                this.isAuthenticated = true;
+                                
+                                localStorage.setItem('lims_token', this.token);
+                                localStorage.setItem('lims_user', JSON.stringify(this.user));
+                                
+                                this.successMessage = 'Login successful!';
+                                await this.loadDashboardData();
+                                this.credentials = { username: '', password: '' };
+                            } else {
+                                this.loginError = data.message || 'Login failed';
+                            }
+                        } else {
+                            const errorData = await response.json().catch(() => ({}));
+                            this.loginError = errorData.message || `Login failed (${response.status})`;
+                        }
+                    } catch (error) {
+                        this.loginError = 'Network error. Please try again.';
+                    } finally {
+                        this.isLogging = false;
+                    }
+                },
+
+                logout() {
+                    if (this.token) {
+                        fetch('/api/v1/auth/logout', {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${this.token}` }
+                        }).catch(() => {});
+                    }
+                    
+                    this.isAuthenticated = false;
+                    this.token = '';
+                    this.user = null;
+                    this.currentPage = 'dashboard';
+                    this.resetData();
+                    
+                    localStorage.removeItem('lims_token');
+                    localStorage.removeItem('lims_user');
+                },
+
+                resetData() {
+                    this.reagents = [];
+                    this.stats = {};
+                    this.lowStockItems = [];
+                    this.expiringItems = [];
+                    this.users = [];
+                },
+
+                setPage(page) {
+                    this.currentPage = page;
+                    this.sidebarOpen = false; // Close mobile sidebar
+                    
+                    if (page === 'reagents') {
+                        this.loadReagents();
+                    } else if (page === 'reports') {
+                        this.loadLowStock();
+                        this.loadExpiringItems();
+                    } else if (page === 'users' && this.isAdmin()) {
+                        this.loadUsers();
+                    }
+                },
+
+                async loadDashboardData() {
+                    try {
+                        const [reagentsRes,batchesRes,lowStockRes, expiringRes] = await Promise.all([
+                            this.apiCall('/api/v1/reagents?per_page=1'),
+                            this.apiCall('/api/v1/batches?per_page=1'),
+                            this.apiCall('/api/v1/reagents/low-stock?threshold=10'),  // Вернуть reagents/low-stock
+                            this.apiCall('/api/v1/reagents/expiring?days=30')  // Вернуть reagents/expiring
+                        ]);
+
+                        if (reagentsRes?.success && reagentsRes.data) {
+                            this.stats.totalReagents = reagentsRes.data.total || 0;
+                        }
+                        // totalBatches (новое, из get_all_batches)
+                        if (batchesRes?.success && batchesRes.data) {
+                            this.stats.totalBatches = batchesRes.data.total || 0;  // total из PaginatedResponse
+                        } else {
+                            console.warn('Failed to load total batches');
+                            this.stats.totalBatches = 0;
+                        }
+
+                        if (lowStockRes?.success && lowStockRes.data) {
+                            this.stats.lowStock = Array.isArray(lowStockRes.data) ? lowStockRes.data.length : 0;
+                        }
+
+                        if (expiringRes?.success && expiringRes.data) {
+                            this.stats.expiringSoon = Array.isArray(expiringRes.data) ? expiringRes.data.length : 0;
+                        }
+                    } catch (error) {
+                        console.error('Failed to load dashboard data:', error);
+                    }
+                },
+
+                async loadReagents(page = 1) {
+                    this.isLoading = true;
+                    try {
+                        let url = `/api/v1/reagents?page=${page}&per_page=${this.pagination.per_page}`;
+                        
+                        if (this.searchTerm.trim()) {
+                            url += `&search=${encodeURIComponent(this.searchTerm)}`;
+                        }
+                        
+                        if (this.statusFilter) {
+                            url += `&status=${this.statusFilter}`;
+                        }
+
+                        const response = await this.apiCall(url);
+                        if (response?.success && response.data) {
+                            this.reagents = response.data.data || [];
+                            this.pagination = {
+                                page: response.data.page,
+                                per_page: response.data.per_page,
+                                total: response.data.total,
+                                total_pages: response.data.total_pages
+                            };
+                        }
+                    } catch (error) {
+                        console.error('Failed to load reagents:', error);
+                        this.reagents = [];
+                    } finally {
+                        this.isLoading = false;
+                    }
+                },
+
+                loadPage(page) {
+                    this.loadReagents(page);
+                },
+
+                debounceSearch() {
+                    clearTimeout(this.searchTimeout);
+                    this.searchTimeout = setTimeout(() => {
+                        this.loadReagents(1);
+                    }, 500);
+                },
+
+                 async loadExpiringItems() {
+                    this.loadingExpiring = true;
+                    try {
+                        const response = await this.apiCall('/api/v1/reagents/expiring?days=30');  // reagents/expiring
+                        if (response?.success && response.data) {
+                            this.expiringItems = Array.isArray(response.data) ? response.data : [];
+                        }
+                    } catch (error) {
+                        console.error('Failed to load expiring items:', error);
+                        this.expiringItems = [];
+                    } finally {
+                        this.loadingExpiring = false;
+                    }
+                },
+
+                async loadLowStock() {
+                    this.loadingLowStock = true;
+                    try {
+                        const response = await this.apiCall('/api/v1/reagents/low-stock?threshold=10');
+                        if (response?.success && response.data) {
+                            this.lowStockItems = Array.isArray(response.data) ? response.data : [];
+                        }
+                    } catch (error) {
+                        console.error('Failed to load low stock items:', error);
+                        this.lowStockItems = [];
+                    } finally {
+                        this.loadingLowStock = false;
+                    }
+                },
+
+             async loadUsers() {
+                    this.loadingUsers = true;
+                    try {
+                        console.log('Loading users...');
+                        const response = await this.apiCall('/api/v1/auth/users');
+                        console.log('Users API response:', response);
+                        if (response?.success && response.data) {
+                            this.users = Array.isArray(response.data) ? response.data : [];
+                            console.log('Loaded users:', this.users);
+                        }
+                    } catch (error) {
+                        console.error('Failed to load users:', error);
+                        this.users = [];
+                    } finally {
+                        this.loadingUsers = false;
+                    }
+                },
+
+                // Reagent methods
+                async createReagent() {
+                    this.creatingReagent = true;
+                    try {
+                        const response = await this.apiCall('/api/v1/reagents', {
+                            method: 'POST',
+                            body: JSON.stringify(this.newReagent)
+                        });
+
+                        if (response?.success) {
+                            this.showCreateReagentModal = false;
+                            this.newReagent = { name: '', formula: '', cas_number: '', manufacturer: '', description: '' };
+                            await this.loadReagents();
+                            this.showSuccess('Reagent created successfully!');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to create reagent: ' + error.message);
+                    } finally {
+                        this.creatingReagent = false;
+                    }
+                },
+
+                editReagent(reagent) {
+                    this.editingReagent = { ...reagent };
+                    this.showEditReagentModal = true;
+                },
+
+                async updateReagent() {
+                    this.updatingReagent = true;
+                    try {
+                        const response = await this.apiCall(`/api/v1/reagents/${this.editingReagent.id}`, {
+                            method: 'PUT',
+                            body: JSON.stringify(this.editingReagent)
+                        });
+
+                        if (response?.success) {
+                            this.showEditReagentModal = false;
+                            await this.loadReagents();
+                            this.showSuccess('Reagent updated successfully!');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to update reagent: ' + error.message);
+                    } finally {
+                        this.updatingReagent = false;
+                    }
+                },
+
+                async viewReagent(id) {
+                    this.loadingReagentDetail = true;
+                    this.showReagentDetailModal = true;
+                    
+                    try {
+                        const response = await this.apiCall(`/api/v1/reagents/${id}/details`);
+                        if (response?.success && response.data) {
+                            this.selectedReagent = response.data;
+                        }
+                    } catch (error) {
+                        console.error('Failed to load reagent details:', error);
+                        this.showError('Failed to load reagent details: ' + error.message);
+                        this.showReagentDetailModal = false;
+                    } finally {
+                        this.loadingReagentDetail = false;
+                    }
+                },
+
+                async deleteReagent(id) {
+                    if (!confirm('Are you sure you want to delete this reagent? This action cannot be undone.')) {
+                        return;
+                    }
+
+                    try {
+                        const response = await this.apiCall(`/api/v1/reagents/${id}`, {
+                            method: 'DELETE'
+                        });
+
+                        if (response?.success) {
+                            await this.loadReagents();
+                            this.showSuccess('Reagent deleted successfully');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to delete reagent: ' + error.message);
+                    }
+                },
+
+                // Batch methods
+                async createBatch() {
+                    this.creatingBatch = true;
+                    try {
+                        if (!this.selectedReagent?.id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)) {
+                            throw new Error('Invalid reagent ID');
+                        }
+                        const batchData = { ...this.newBatch };
+                        batchData.quantity = parseFloat(batchData.quantity);
+                        if (isNaN(batchData.quantity) || batchData.quantity <= 0) {
+                            throw new Error('Quantity must be a positive number');
+                        }
+                        if (batchData.received_date) {
+                            batchData.received_date = new Date(batchData.received_date).toISOString();
+                        }
+                        if (batchData.expiry_date) {
+                            batchData.expiry_date = new Date(batchData.expiry_date).toISOString();
+                        }
+
+                        const url = `/api/v1/reagents/${this.selectedReagent.id}/batches`;
+                        console.log('Request URL:', url); // Для отладки
+                        const response = await this.apiCall(url, {
+                            method: 'POST',
+                            body: JSON.stringify(batchData)
+                        });
+
+                        if (response?.success) {
+                            this.showCreateBatchModal = false;
+                            this.resetBatchForm();
+                            await this.viewReagent(this.selectedReagent.id);
+                            this.showSuccess('Batch created successfully!');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to create batch: ' + error.message);
+                    } finally {
+                        this.creatingBatch = false;
+                    }
+                },
+                editBatch(batch) {
+                    this.editingBatch = { ...batch };
+                    if (this.editingBatch.received_date) {
+                        this.editingBatch.received_date = new Date(this.editingBatch.received_date).toISOString().split('T')[0];
+                    }
+                    if (this.editingBatch.expiry_date) {
+                        this.editingBatch.expiry_date = new Date(this.editingBatch.expiry_date).toISOString().split('T')[0];
+                    }
+                    this.showEditBatchModal = true;
+                },
+
+                // Метод updateBatch
+                async updateBatch() {
+                    this.updatingBatch = true;
+                    try {
+                        const batchData = { ...this.editingBatch };
+                        // Преобразуем quantity в число
+                        batchData.quantity = parseFloat(batchData.quantity);
+                        if (isNaN(batchData.quantity) || batchData.quantity <= 0) {
+                            throw new Error('Quantity must be a positive number');
+                        }
+                        if (batchData.received_date) {
+                            batchData.received_date = new Date(batchData.received_date).toISOString();
+                        }
+                        if (batchData.expiry_date) {
+                            batchData.expiry_date = new Date(batchData.expiry_date).toISOString();
+                        }
+
+                        const response = await this.apiCall(
+                            `/api/v1/reagents/${this.selectedReagent.id}/batches/${this.editingBatch.id}`,
+                            {
+                                method: 'PUT',
+                                body: JSON.stringify(batchData)
+                            }
+                        );
+
+                        if (response?.success) {
+                            this.showEditBatchModal = false;
+                            await this.viewReagent(this.selectedReagent.id);
+                            this.showSuccess('Batch updated successfully!');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to update batch: ' + error.message);
+                    } finally {
+                        this.updatingBatch = false;
+                    }
+                },
+                async deleteBatch(batchId) {
+                    if (!confirm('Are you sure you want to delete this batch?')) {
+                        return;
+                    }
+
+                    try {
+                        const response = await this.apiCall(
+                            `/api/v1/reagents/${this.selectedReagent.id}/batches/${batchId}`,
+                            { method: 'DELETE' }
+                        );
+
+                        if (response?.success) {
+                            await this.viewReagent(this.selectedReagent.id);
+                            this.showSuccess('Batch deleted successfully');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to delete batch: ' + error.message);
+                    }
+                },
+
+                showUseBatchModal(batch) {
+                    this.selectedBatch = batch;
+                    this.usageData = { quantity_used: '', purpose: '', notes: '' };
+                    this.showUseBatchModalFlag = true;
+                },
+
+                async useReagent() {
+                    this.usingReagent = true;
+                    try {
+                        const usageData = { ...this.usageData };
+                        // Преобразуем quantity_used в число
+                        usageData.quantity_used = parseFloat(usageData.quantity_used);
+                        if (isNaN(usageData.quantity_used) || usageData.quantity_used <= 0) {
+                            throw new Error('Quantity used must be a positive number');
+                        }
+
+                        const response = await this.apiCall(
+                            `/api/v1/reagents/${this.selectedReagent.id}/batches/${this.selectedBatch.id}/use`,
+                            {
+                                method: 'POST',
+                                body: JSON.stringify(usageData)
+                            }
+                        );
+
+                        if (response?.success) {
+                            this.showUseBatchModalFlag = false;
+                            await this.viewReagent(this.selectedReagent.id);
+                            this.showSuccess('Reagent usage recorded successfully!');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to record usage: ' + error.message);
+                    } finally {
+                        this.usingReagent = false;
+                    }
+                },
+
+                async viewBatchUsage(batchId) {
+                    this.loadingUsageHistory = true;
+                    this.showUsageHistoryModal = true;
+                    
+                    try {
+                        const response = await this.apiCall(
+                            `/api/v1/reagents/${this.selectedReagent.id}/batches/${batchId}/usage`
+                        );
+                        if (response?.success && response.data) {
+                            this.usageHistory = response.data.data || [];
+                        }
+                    } catch (error) {
+                        console.error('Failed to load usage history:', error);
+                        this.showError('Failed to load usage history: ' + error.message);
+                        this.showUsageHistoryModal = false;
+                    } finally {
+                        this.loadingUsageHistory = false;
+                    }
+                },
+
+                // User management methods
+                async createUser() {
+                    this.creatingUser = true;
+                    try {
+                        const response = await this.apiCall('/api/v1/auth/register', {
+                            method: 'POST',
+                            body: JSON.stringify(this.newUser)
+                        });
+
+                        if (response?.success) {
+                            this.showCreateUserModal = false;
+                            this.newUser = { username: '', email: '', password: '', role: '' };
+                            await this.loadUsers();
+                            this.showSuccess('User created successfully!');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to create user: ' + error.message);
+                    } finally {
+                        this.creatingUser = false;
+                    }
+                },
+
+                editUser(user) {
+                    this.editingUser = { ...user };
+                    this.showEditUserModal = true;
+                },
+
+                async updateUser() {
+                    this.updatingUser = true;
+                    try {
+                        const response = await this.apiCall(`/api/v1/auth/users/${this.editingUser.id}`, {
+                            method: 'PUT',
+                            body: JSON.stringify({
+                                role: this.editingUser.role,
+                                is_active: Boolean(this.editingUser.is_active)
+                            })
+                        });
+
+                        if (response?.success) {
+                            this.showEditUserModal = false;
+                            await this.loadUsers();
+                            this.showSuccess('User updated successfully!');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to update user: ' + error.message);
+                    } finally {
+                        this.updatingUser = false;
+                    }
+                },
+
+                async toggleUserStatus(user) {
+                    const action = user.is_active ? 'deactivate' : 'activate';
+                    if (!confirm(`Are you sure you want to ${action} this user?`)) {
+                        return;
+                    }
+
+                    try {
+                        const response = await this.apiCall(`/api/v1/auth/users/${user.id}`, {
+                            method: 'PUT',
+                            body: JSON.stringify({
+                                is_active: !user.is_active
+                            })
+                        });
+
+                        if (response?.success) {
+                            await this.loadUsers();
+                            this.showSuccess(`User ${action}d successfully!`);
+                        }
+                    } catch (error) {
+                        this.showError(`Failed to ${action} user: ` + error.message);
+                    }
+                },
+                // Добавить после метода toggleUserStatus
+                async changeUserPassword(user) {
+                    const newPassword = prompt(`Enter new password for user ${user.username}:`);
+                    if (!newPassword) return;
+                    
+                    if (newPassword.length < 8) {
+                        this.showError('Password must be at least 8 characters');
+                        return;
+                    }
+
+                    try {
+                        const response = await this.apiCall(`/api/v1/auth/users/${user.id}/reset-password`, {
+                            method: 'PUT',
+                            body: JSON.stringify({ new_password: newPassword })
+                        });
+
+                        if (response?.success) {
+                            this.showSuccess('Password changed successfully!');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to change password: ' + error.message);
+                    }
+                },
+                async changeOwnPassword() {
+                    // Проверка совпадения паролей
+                    if (this.ownPasswordChange.newPassword !== this.ownPasswordChange.confirmPassword) {
+                        this.showError('New passwords do not match');
+                        return;
+                    }
+                    
+                    if (this.ownPasswordChange.newPassword.length < 8) {
+                        this.showError('New password must be at least 8 characters');
+                        return;
+                    }
+
+                    this.changingOwnPassword = true;
+                    try {
+                        const response = await this.apiCall('/api/v1/auth/change-password', {
+                            method: 'POST',
+                            body: JSON.stringify({
+                                current_password: this.ownPasswordChange.currentPassword,
+                                new_password: this.ownPasswordChange.newPassword
+                            })
+                        });
+
+                        if (response?.success) {
+                            this.showChangeOwnPasswordModal = false;
+                            this.ownPasswordChange = {
+                                currentPassword: '',
+                                newPassword: '',
+                                confirmPassword: ''
+                            };
+                            this.showSuccess('Password changed successfully!');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to change password: ' + error.message);
+                    } finally {
+                        this.changingOwnPassword = false;
+                    }
+                },
+               async deleteUser(user) {
+                    console.log('deleteUser function called with user:', user);
+                    console.log('Current user ID:', this.user?.id);
+                    console.log('Target user ID:', user.id);
+                    console.log('=== DELETE USER DEBUG ===');
+                    console.log('this.user (current logged user):', this.user);
+                    console.log('user parameter (target user):', user);
+                    console.log('Current user ID:', this.user?.id);
+                    console.log('Target user ID:', user.id);
+                    console.log('Are IDs equal?', user.id === this.user?.id);
+                    const currentUser = JSON.parse(localStorage.getItem('lims_user') || '{}');
+                    console.log('Current user from localStorage:', currentUser);
+                    console.log('Target user:', user);
+                    
+                    if (user.id === currentUser.id) {
+                        this.showError('Cannot delete your own account');
+                        return;
+                    }
+                    
+                    if (!confirm(`Are you sure you want to delete user ${user.username}? This action cannot be undone.`)) {
+                        return;
+                    }
+
+                    try {
+                        const response = await this.apiCall(`/api/v1/auth/users/${user.id}`, {
+                            method: 'DELETE'
+                        });
+
+                        if (response?.success) {
+                            await this.loadUsers();
+                            this.showSuccess('User deleted successfully!');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to delete user: ' + error.message);
+                    }
+                },
+
+                // Utility methods
+               async apiCall(url, options = {}) {
+                    try {
+                        const config = {
+                            ...options,
+                            headers: {
+                                'Authorization': `Bearer ${this.token}`,
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-Requested-With': 'XMLHttpRequest',
+                                ...options.headers
+                            }
+                        };
+
+                        const response = await fetch(url, config);
+                        
+                        if (response.status === 401) {
+                            if (this.isAuthenticated) {
+                                this.logout();
+                            }
+                            throw new Error('Unauthorized');
+                        }
+
+                        const responseText = await response.text();
+
+                        if (!response.ok) {
+                            let errorMessage;
+                            try {
+                                // Проверяем, действительно ли это JSON
+                                const contentType = response.headers.get('content-type');
+                                if (contentType && contentType.includes('application/json')) {
+                                    const errorData = JSON.parse(responseText);
+                                    errorMessage = errorData.message || `HTTP ${response.status}`;
+                                } else {
+                                    errorMessage = `HTTP ${response.status}: Server returned non-JSON response`;
+                                }
+                            } catch (parseError) {
+                                errorMessage = `HTTP ${response.status}: ${responseText.substring(0, 100)}`;
+                            }
+                            throw new Error(errorMessage);
+                        }
+
+                        // Проверяем Content-Type перед парсингом успешного ответа
+                        const contentType = response.headers.get('content-type');
+                        if (!contentType || !contentType.includes('application/json')) {
+                            throw new Error('Server returned non-JSON response');
+                        }
+
+                        return JSON.parse(responseText);
+                    } catch (error) {
+                        console.error('API call failed:', error);
+                        throw error;
+                    }
+                },
+
+                resetBatchForm() {
+                    this.newBatch = {
+                        batch_number: '', quantity: '', unit: '', supplier: '',
+                        manufacturer: '', received_date: '', expiry_date: '', location: '', notes: ''
+                    };
+                },
+
+                showSuccess(message) {
+                    this.successMessage = message;
+                    setTimeout(() => this.successMessage = '', 5000);
+                },
+
+                showError(message) {
+                    this.loginError = message;
+                    setTimeout(() => this.loginError = '', 5000);
+                },
+
+                // Permission checks
+                isAdmin() {
+                    return this.user?.role === 'Admin';
+                },
+
+                canCreateReagents() {
+                    return ['Admin', 'Researcher'].includes(this.user?.role);
+                },
+
+                canEditReagents() {
+                    return ['Admin', 'Researcher'].includes(this.user?.role);
+                },
+
+                canDeleteReagents() {
+                    return this.user?.role === 'Admin';
+                },
+
+                canCreateBatches() {
+                    return ['Admin', 'Researcher'].includes(this.user?.role);
+                },
+
+                canEditBatches() {
+                    return ['Admin', 'Researcher'].includes(this.user?.role);
+                },
+
+                canDeleteBatches() {
+                    return this.user?.role === 'Admin';
+                }
+            }
+        }
+    </script>
+</body>
+</html>
