@@ -1,0 +1,5 @@
+// If the structs are in a submodule, import them correctly first
+pub mod query_builder;
+
+// Then re-export them
+pub use query_builder::{SafeQueryBuilder, CountQueryBuilder};
