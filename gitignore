@@ -1,0 +1,225 @@
+# ==========================================
+# LIMS Project .gitignore
+# ==========================================
+
+# ==========================================
+# SECURITY & SECRETS
+# ==========================================
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.*.local
+
+# ==========================================
+# RUST / CARGO
+# ==========================================
+# Build artifacts
+/target/
+**/target/
+
+# Cargo lock file (for libraries, keep for applications)
+# Uncomment if this is a library:
+# Cargo.lock
+
+# Backup files
+**/*.rs.bk
+*.pdb
+
+# ==========================================
+# DATABASE FILES
+# ==========================================
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+lims.db
+lims.db-shm
+lims.db-wal
+
+# ==========================================
+# IDE & EDITORS
+# ==========================================
+# JetBrains (IntelliJ IDEA, CLion, RustRover)
+.idea/
+*.iml
+*.iws
+.idea_modules/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# VS Code
+.vscode/
+*.code-workspace
+.history/
+
+# Vim
+*.swp
+*.swo
+*~
+.*.sw?
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ==========================================
+# OPERATING SYSTEM
+# ==========================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ==========================================
+# NODE.JS / FRONTEND
+# ==========================================
+# Dependencies
+node_modules/
+/lims-frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Production builds
+/lims-frontend/build/
+/lims-frontend/dist/
+/frontend/build/
+/frontend/dist/
+
+# Testing
+/lims-frontend/coverage/
+/frontend/coverage/
+
+# Environment
+/lims-frontend/.env.local
+/lims-frontend/.env.development.local
+/lims-frontend/.env.test.local
+/lims-frontend/.env.production.local
+
+# Misc
+.eslintcache
+
+# ==========================================
+# LOGS
+# ==========================================
+*.log
+logs/
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ==========================================
+# TEMPORARY FILES
+# ==========================================
+*.tmp
+*.temp
+*.bak
+*.swp
+*.cache
+
+# ==========================================
+# UPLOADS & USER DATA
+# ==========================================
+/uploads/
+/exports/
+/temp/
+/tmp/
+
+# Keep directory structure but ignore contents
+# (uncomment if you want to keep empty directories)
+# /uploads/*
+# !/uploads/.gitkeep
+
+# ==========================================
+# COMPILED / GENERATED
+# ==========================================
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+
+# ==========================================
+# TESTING
+# ==========================================
+/coverage/
+.nyc_output/
+*.lcov
+
+# ==========================================
+# DOCUMENTATION
+# ==========================================
+# Keep documentation, but ignore generated docs
+# /docs/generated/
+
+# ==========================================
+# MISC
+# ==========================================
+# Backup files
+*.orig
+*.rej
+
+# Package files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# Lock files (optional - uncomment if needed)
+# package-lock.json
+# yarn.lock
+
+# ==========================================
+# PROJECT SPECIFIC
+# ==========================================
+# Add any project-specific ignores below:
+
+# JWT keys if stored as files
+*.key
+*.pem
+private_key.*
+public_key.*
+
+# SSL certificates (if any)
+*.crt
+*.cer
+*.p12
+*.pfx
+
+# ==========================================
+# END OF .gitignore
+# ==========================================
