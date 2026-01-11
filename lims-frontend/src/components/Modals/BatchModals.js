@@ -33,7 +33,7 @@ const BatchFormModal = ({ isOpen, onClose, title, reagentId, batch = null, onSav
       setFormData({
         batch_number: batch.batch_number || '',
         quantity: batch.quantity != null ? parseFloat(batch.quantity) : '',
-        unit: batch.unit || 'g',
+        unit: batch.unit || '',
         supplier: batch.supplier || '',
         manufacturer: batch.manufacturer || '',
         received_date: batch.received_date?.split('T')[0] || '',

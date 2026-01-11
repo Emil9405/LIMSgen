@@ -11,6 +11,7 @@ use actix_files::{NamedFile, Files};
 use std::env;
 use std::path::PathBuf;
 use crate::config::load_config;
+use crate::auth::UserRole;
 use crate::auth::get_current_user;
 use crate::handlers::PaginationQuery;
 use crate::models::{
@@ -54,13 +55,12 @@ mod jwt_rotation;
 pub mod validator;
 pub mod repositories;
 pub mod query_builders;
-// New modular handlers
 mod reagent_handlers;
 pub mod room_handlers;
 mod batch_handlers;
 mod equipment_handlers;
 mod import_export;
-
+mod pagination;
 use actix_web::middleware::Compress;
 use config::{Config, load_env_file};
 use auth::{AuthService, jwt_middleware};
@@ -77,9 +77,9 @@ use handlers::{
 use reagent_handlers::{
     get_reagent_by_id, 
     get_reagents, 
-    search_reagents, 
-    get_reagents_cursor, 
-    get_reagents_pagination_meta
+    search_reagents,
+    rebuild_cache,
+
 };
 
 // Batch handlers - FIXED: get_batches_for_reagent instead of get_batches_by_reagent
@@ -508,7 +508,17 @@ async fn logout(
         "Logged out successfully".to_string(),
     )))
 }
+async fn rebuild_cache_protected(
+    app_state: web::Data<Arc<AppState>>,
+    http_request: HttpRequest,
+) -> ApiResult<HttpResponse> {
+    let claims = auth::get_current_user(&http_request)?;
+        if claims.role != crate::auth::UserRole::Admin {
+            return Err(crate::error::ApiError::Forbidden("Admin access required".to_string()));
+    }
 
+    reagent_handlers::rebuild_cache(app_state).await
+}
 // ==================== MAIN ====================
 
 #[actix_web::main]
@@ -630,7 +640,11 @@ async fn main() -> anyhow::Result<()> {
                         web::scope("/dashboard")
                             .route("/stats", web::get().to(get_dashboard_stats))
                     )
-
+                    // Admin (cache management)
+                    .service(
+                        web::scope("/admin")
+                            .route("/cache/rebuild", web::post().to(rebuild_cache_protected))
+                    )
                     // Batches
                     .service(
                         web::scope("/batches")
@@ -648,12 +662,9 @@ async fn main() -> anyhow::Result<()> {
                     // Reagents
                     .service(
                         web::scope("/reagents")
-                            .route("/cursor", web::get().to(get_reagents_cursor))
-                            .route("/pagination-meta", web::get().to(get_reagents_pagination_meta))
                             .route("", web::post().to(create_reagent_protected))
                             .route("", web::get().to(get_reagents))
                             .route("/search", web::get().to(search_reagents))
-                            .route("/stock-summary", web::get().to(reagent_handlers::get_reagents_stock_summary))
                             .route("/export", web::get().to(export_reagents))
                             .route("/import", web::post().to(import_reagents))
                             .route("/import/json", web::post().to(import_reagents_json))

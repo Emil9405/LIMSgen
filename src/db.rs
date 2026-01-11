@@ -1,7 +1,41 @@
-// src/db.rs - Database migrations and setup with FTS5 support
+// src/db.rs - Database migrations and setup
+// Optimized for 270,000+ records with hybrid pagination
 
 use sqlx::SqlitePool;
 use anyhow::Result;
+use log::info;
+
+pub async fn ensure_performance_indexes(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    info!("Checking and applying performance indexes...");
+
+    let queries = [
+        // Batches indexes
+        r#"CREATE INDEX IF NOT EXISTS idx_batches_status_expiry ON batches(status, expiry_date);"#,
+        r#"CREATE INDEX IF NOT EXISTS idx_batches_reagent_status ON batches(reagent_id, status);"#,
+        r#"CREATE INDEX IF NOT EXISTS idx_batches_status_quantities ON batches(status, quantity, original_quantity);"#,
+
+        // Reagents indexes for pagination
+        r#"CREATE INDEX IF NOT EXISTS idx_reagents_status_name ON reagents(status, name);"#,
+        r#"CREATE INDEX IF NOT EXISTS idx_reagents_name ON reagents(name);"#,
+        r#"CREATE INDEX IF NOT EXISTS idx_reagents_created_at ON reagents(created_at DESC, id ASC);"#,
+
+        // Critical index for keyset pagination by total_quantity
+        r#"CREATE INDEX IF NOT EXISTS idx_reagents_total_qty ON reagents(total_quantity DESC, id ASC);"#,
+        r#"CREATE INDEX IF NOT EXISTS idx_reagents_total_qty_asc ON reagents(total_quantity ASC, id DESC);"#,
+
+        // Audit logs
+        r#"CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);"#,
+    ];
+
+    for query in queries {
+        sqlx::query(query).execute(pool).await?;
+    }
+
+    sqlx::query("ANALYZE;").execute(pool).await?;
+
+    info!("Performance indexes applied successfully.");
+    Ok(())
+}
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     // Enable foreign keys and WAL mode
@@ -13,7 +47,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    // Create users table - Fixed boolean handling for SQLite
+    // Create users table
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS users (
@@ -36,7 +70,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    // Create the reagent table
+    // Create reagents table with cached fields
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS reagents (
@@ -51,10 +85,14 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
             storage_conditions TEXT CHECK(storage_conditions IS NULL OR length(storage_conditions) <= 255),
             appearance TEXT CHECK(appearance IS NULL OR length(appearance) <= 255),
             hazard_pictograms TEXT CHECK(hazard_pictograms IS NULL OR length(hazard_pictograms) <= 100),
-
             status TEXT NOT NULL DEFAULT 'active' CHECK(
                 status IN ('active', 'inactive', 'discontinued')
             ),
+            -- Cached aggregation fields (updated by triggers)
+            total_quantity REAL NOT NULL DEFAULT 0.0,
+            batches_count INTEGER NOT NULL DEFAULT 0,
+            primary_unit TEXT,
+            -- Audit fields
             created_by TEXT,
             updated_by TEXT,
             created_at DATETIME NOT NULL,
@@ -67,7 +105,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    // Create batches table with reserved_quantity field
+    // Create batches table
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS batches (
@@ -104,14 +142,13 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         .await?;
 
     // ==================== EQUIPMENT TABLE ====================
-    // ✅ UPDATED: Full schema with all fields including serial_number, manufacturer, model, etc.
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS equipment (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL CHECK(length(name) > 0 AND length(name) <= 255),
             type_ TEXT NOT NULL CHECK(type_ IN (
-                'equipment', 'labware', 'instrument', 'glassware', 
+                'equipment', 'labware', 'instrument', 'glassware',
                 'safety', 'storage', 'consumable', 'other'
             )),
             quantity INTEGER NOT NULL DEFAULT 1 CHECK(quantity >= 1),
@@ -121,7 +158,6 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
             ),
             location TEXT CHECK(location IS NULL OR length(location) <= 255),
             description TEXT CHECK(description IS NULL OR length(description) <= 1000),
-            -- Additional fields for equipment management
             serial_number TEXT CHECK(serial_number IS NULL OR length(serial_number) <= 100),
             manufacturer TEXT CHECK(manufacturer IS NULL OR length(manufacturer) <= 255),
             model TEXT CHECK(model IS NULL OR length(model) <= 255),
@@ -130,7 +166,6 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
             last_maintenance TEXT,
             next_maintenance TEXT,
             maintenance_interval_days INTEGER DEFAULT 90,
-            -- Audit fields
             created_by TEXT,
             updated_by TEXT,
             created_at DATETIME NOT NULL,
@@ -143,11 +178,133 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    // Create equipment_parts table
+    // ==================== ROOMS TABLE ====================
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS rooms (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE CHECK(length(name) > 0 AND length(name) <= 100),
+            description TEXT CHECK(description IS NULL OR length(description) <= 500),
+            capacity INTEGER CHECK(capacity IS NULL OR capacity > 0),
+            status TEXT NOT NULL DEFAULT 'available' CHECK(
+                status IN ('available', 'occupied', 'maintenance', 'unavailable')
+            ),
+            equipment_list TEXT,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL
+        )
+        "#,
+    )
+        .execute(pool)
+        .await?;
+
+    // ==================== EXPERIMENTS TABLE ====================
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS experiments (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL CHECK(length(title) > 0 AND length(title) <= 255),
+            description TEXT CHECK(description IS NULL OR length(description) <= 2000),
+            status TEXT NOT NULL DEFAULT 'draft' CHECK(
+                status IN ('draft', 'planned', 'in_progress', 'completed', 'cancelled', 'on_hold')
+            ),
+            experiment_type TEXT NOT NULL DEFAULT 'research' CHECK(
+                experiment_type IN ('educational', 'research')
+            ),
+            start_date DATETIME,
+            end_date DATETIME,
+            location TEXT CHECK(location IS NULL OR length(location) <= 255),
+            room_id TEXT,
+            researcher_id TEXT,
+            created_by TEXT,
+            updated_by TEXT,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            FOREIGN KEY (researcher_id) REFERENCES users (id),
+            FOREIGN KEY (room_id) REFERENCES rooms (id),
+            FOREIGN KEY (created_by) REFERENCES users (id),
+            FOREIGN KEY (updated_by) REFERENCES users (id)
+        )
+        "#,
+    )
+        .execute(pool)
+        .await?;
+
+    // ==================== EXPERIMENT_REAGENTS TABLE ====================
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS experiment_reagents (
+            id TEXT PRIMARY KEY,
+            experiment_id TEXT NOT NULL,
+            reagent_id TEXT NOT NULL,
+            batch_id TEXT,
+            planned_quantity REAL NOT NULL CHECK(planned_quantity > 0),
+            actual_quantity REAL,
+            unit TEXT NOT NULL CHECK(length(unit) > 0 AND length(unit) <= 20),
+            is_consumed INTEGER NOT NULL DEFAULT 0 CHECK(is_consumed IN (0, 1)),
+            notes TEXT CHECK(notes IS NULL OR length(notes) <= 500),
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            FOREIGN KEY (experiment_id) REFERENCES experiments (id) ON DELETE CASCADE,
+            FOREIGN KEY (reagent_id) REFERENCES reagents (id),
+            FOREIGN KEY (batch_id) REFERENCES batches (id),
+            UNIQUE(experiment_id, reagent_id, batch_id)
+        )
+        "#,
+    )
+        .execute(pool)
+        .await?;
+
+    // ==================== USAGE_LOGS TABLE ====================
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS usage_logs (
+            id TEXT PRIMARY KEY,
+            reagent_id TEXT NOT NULL,
+            batch_id TEXT NOT NULL,
+            user_id TEXT,
+            experiment_id TEXT,
+            quantity_used REAL NOT NULL CHECK(quantity_used > 0),
+            unit TEXT NOT NULL,
+            purpose TEXT CHECK(purpose IS NULL OR length(purpose) <= 500),
+            notes TEXT CHECK(notes IS NULL OR length(notes) <= 1000),
+            created_at DATETIME NOT NULL,
+            FOREIGN KEY (reagent_id) REFERENCES reagents (id),
+            FOREIGN KEY (batch_id) REFERENCES batches (id),
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (experiment_id) REFERENCES experiments (id)
+        )
+        "#,
+    )
+        .execute(pool)
+        .await?;
+
+    // ==================== AUDIT_LOGS TABLE ====================
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id TEXT PRIMARY KEY,
+            user_id TEXT,
+            action TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_id TEXT,
+            old_value TEXT,
+            new_value TEXT,
+            ip_address TEXT,
+            user_agent TEXT,
+            created_at DATETIME NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+        "#,
+    )
+        .execute(pool)
+        .await?;
+
+    // ==================== EQUIPMENT PARTS TABLE ====================
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS equipment_parts (
-            id TEXT PRIMARY KEY NOT NULL,
+            id TEXT PRIMARY KEY,
             equipment_id TEXT NOT NULL,
             name TEXT NOT NULL CHECK(length(name) > 0 AND length(name) <= 255),
             part_number TEXT CHECK(part_number IS NULL OR length(part_number) <= 100),
@@ -161,164 +318,66 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
             next_replacement TEXT,
             notes TEXT CHECK(notes IS NULL OR length(notes) <= 1000),
             created_by TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY (equipment_id) REFERENCES equipment(id) ON DELETE CASCADE
-        )
-        "#,
-    )
-        .execute(pool)
-        .await?;
-
-    // Create usage_logs table
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS usage_logs (
-            id TEXT PRIMARY KEY,
-            batch_id TEXT NOT NULL,
-            user_id TEXT,
-            quantity_used REAL NOT NULL CHECK(quantity_used > 0),
-            purpose TEXT CHECK(purpose IS NULL OR length(purpose) <= 500),
-            notes TEXT CHECK(notes IS NULL OR length(notes) <= 1000),
-            used_at DATETIME NOT NULL,
             created_at DATETIME NOT NULL,
-            FOREIGN KEY (batch_id) REFERENCES batches (id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users (id)
+            updated_at DATETIME NOT NULL,
+            FOREIGN KEY (equipment_id) REFERENCES equipment (id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users (id)
         )
         "#,
     )
         .execute(pool)
         .await?;
 
-    // Create equipment_maintenance table
+    // ==================== EQUIPMENT MAINTENANCE TABLE ====================
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS equipment_maintenance (
-            id TEXT PRIMARY KEY NOT NULL,
+            id TEXT PRIMARY KEY,
             equipment_id TEXT NOT NULL,
             maintenance_type TEXT NOT NULL CHECK(
-                maintenance_type IN ('scheduled', 'unscheduled', 'calibration', 'repair', 
-                                     'inspection', 'cleaning', 'part_replacement')
+                maintenance_type IN ('calibration', 'repair', 'inspection', 'cleaning', 'replacement', 'other')
             ),
             status TEXT NOT NULL DEFAULT 'scheduled' CHECK(
-                status IN ('scheduled', 'in_progress', 'completed', 'cancelled', 'overdue')
+                status IN ('scheduled', 'in_progress', 'completed', 'cancelled')
             ),
             scheduled_date TEXT NOT NULL,
             completed_date TEXT,
-            performed_by TEXT CHECK(performed_by IS NULL OR length(performed_by) <= 255),
-            description TEXT CHECK(description IS NULL OR length(description) <= 1000),
+            performed_by TEXT,
+            description TEXT CHECK(description IS NULL OR length(description) <= 2000),
             cost REAL CHECK(cost IS NULL OR cost >= 0),
-            parts_replaced TEXT,
+            parts_replaced TEXT CHECK(parts_replaced IS NULL OR length(parts_replaced) <= 1000),
             notes TEXT CHECK(notes IS NULL OR length(notes) <= 1000),
             created_by TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY (equipment_id) REFERENCES equipment(id) ON DELETE CASCADE
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            FOREIGN KEY (equipment_id) REFERENCES equipment (id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users (id)
         )
         "#,
     )
         .execute(pool)
         .await?;
 
-    // Create equipment_files table
+    // ==================== EQUIPMENT FILES TABLE ====================
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS equipment_files (
-            id TEXT PRIMARY KEY NOT NULL,
+            id TEXT PRIMARY KEY,
             equipment_id TEXT NOT NULL,
             part_id TEXT,
-            file_type TEXT NOT NULL CHECK(
-                file_type IN ('manual', 'image', 'certificate', 'specification', 'maintenance_log', 'other')
+            file_type TEXT NOT NULL DEFAULT 'other' CHECK(
+                file_type IN ('manual', 'certificate', 'photo', 'other')
             ),
-            original_filename TEXT NOT NULL CHECK(length(original_filename) > 0),
+            original_filename TEXT NOT NULL,
             stored_filename TEXT NOT NULL,
             file_path TEXT NOT NULL,
             file_size INTEGER NOT NULL CHECK(file_size > 0),
             mime_type TEXT NOT NULL,
             description TEXT CHECK(description IS NULL OR length(description) <= 500),
             uploaded_by TEXT,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (equipment_id) REFERENCES equipment(id) ON DELETE CASCADE,
-            FOREIGN KEY (part_id) REFERENCES equipment_parts(id) ON DELETE CASCADE
-        )
-        "#,
-    )
-        .execute(pool)
-        .await?;
-
-    // Create audit_logs table
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS audit_logs (
-            id TEXT PRIMARY KEY,
-            user_id TEXT,
-            action TEXT NOT NULL CHECK(
-                action IN ('CREATE', 'UPDATE', 'DELETE')
-            ),
-            table_name TEXT NOT NULL,
-            record_id TEXT NOT NULL,
-            old_values TEXT,
-            new_values TEXT,
-            ip_address TEXT,
-            user_agent TEXT,
             created_at DATETIME NOT NULL,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )
-        "#,
-    )
-        .execute(pool)
-        .await?;
-
-    // Create experiments table
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS experiments (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL CHECK(length(title) > 0 AND length(title) <= 255),
-            description TEXT CHECK(description IS NULL OR length(description) <= 2000),
-            experiment_date DATETIME NOT NULL,
-            experiment_type TEXT NOT NULL DEFAULT 'research' CHECK(
-                experiment_type IN ('educational', 'research')
-            ),
-            protocol TEXT CHECK(protocol IS NULL OR length(protocol) <= 5000),
-            start_date DATETIME NOT NULL,
-            end_date DATETIME,
-            results TEXT CHECK(results IS NULL OR length(results) <= 5000),
-            notes TEXT CHECK(notes IS NULL OR length(notes) <= 1000),
-            instructor TEXT CHECK(instructor IS NULL OR length(instructor) <= 255),
-            student_group TEXT CHECK(student_group IS NULL OR length(student_group) <= 100),
-            location TEXT CHECK(location IS NULL OR length(location) <= 255),
-            status TEXT NOT NULL DEFAULT 'planned' CHECK(
-                status IN ('planned', 'in_progress', 'completed', 'cancelled')
-            ),
-            room_id TEXT,
-            created_by TEXT NOT NULL,
-            updated_by TEXT,
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL,
-            FOREIGN KEY (created_by) REFERENCES users (id),
-            FOREIGN KEY (updated_by) REFERENCES users (id),
-            FOREIGN KEY (room_id) REFERENCES rooms (id)
-        )
-        "#,
-    )
-        .execute(pool)
-        .await?;
-
-    // Create experiment_documents table
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS experiment_documents (
-            id TEXT PRIMARY KEY,
-            experiment_id TEXT NOT NULL,
-            filename TEXT NOT NULL CHECK(length(filename) > 0 AND length(filename) <= 255),
-            original_filename TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            file_size INTEGER NOT NULL CHECK(file_size > 0),
-            mime_type TEXT NOT NULL,
-            uploaded_by TEXT NOT NULL,
-            uploaded_at DATETIME NOT NULL,
-            FOREIGN KEY (experiment_id) REFERENCES experiments (id) ON DELETE CASCADE,
+            FOREIGN KEY (equipment_id) REFERENCES equipment (id) ON DELETE CASCADE,
+            FOREIGN KEY (part_id) REFERENCES equipment_parts (id) ON DELETE SET NULL,
             FOREIGN KEY (uploaded_by) REFERENCES users (id)
         )
         "#,
@@ -326,428 +385,243 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    // Create experiment_reagents table
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS experiment_reagents (
-            id TEXT PRIMARY KEY,
-            experiment_id TEXT NOT NULL,
-            batch_id TEXT NOT NULL,
-            quantity_used REAL NOT NULL CHECK(quantity_used > 0),
-            is_consumed INTEGER NOT NULL DEFAULT 0 CHECK(is_consumed IN (0, 1)),
-            notes TEXT CHECK(notes IS NULL OR length(notes) <= 500),
-            created_at DATETIME NOT NULL,
-            FOREIGN KEY (experiment_id) REFERENCES experiments (id) ON DELETE CASCADE,
-            FOREIGN KEY (batch_id) REFERENCES batches (id) ON DELETE CASCADE
-        )
-        "#,
-    )
-        .execute(pool)
-        .await?;
+    // ==================== RUN ADDITIONAL MIGRATIONS ====================
+    run_additional_migrations(pool).await?;
 
-    // Create experiment_equipment table
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS experiment_equipment (
-            id TEXT PRIMARY KEY,
-            experiment_id TEXT NOT NULL,
-            equipment_id TEXT NOT NULL,
-            quantity_used INTEGER NOT NULL DEFAULT 1 CHECK(quantity_used >= 1),
-            notes TEXT CHECK(notes IS NULL OR length(notes) <= 500),
-            created_at DATETIME NOT NULL,
-            FOREIGN KEY (experiment_id) REFERENCES experiments (id) ON DELETE CASCADE,
-            FOREIGN KEY (equipment_id) REFERENCES equipment (id) ON DELETE CASCADE
-        )
-        "#,
-    )
-        .execute(pool)
-        .await?;
+    // ==================== CREATE BATCH TRIGGERS ====================
+    create_batch_triggers(pool).await?;
 
-    // Create rooms table
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS rooms (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL UNIQUE CHECK(length(name) > 0 AND length(name) <= 100),
-            description TEXT CHECK(description IS NULL OR length(description) <= 500),
-            capacity INTEGER CHECK(capacity IS NULL OR (capacity >= 1 AND capacity <= 1000)),
-            color TEXT CHECK(color IS NULL OR length(color) <= 20),
-            status TEXT NOT NULL DEFAULT 'available' CHECK(
-                status IN ('available', 'reserved', 'occupied', 'maintenance', 'unavailable')
-            ),
-            created_by TEXT,
-            updated_by TEXT,
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL,
-            FOREIGN KEY (created_by) REFERENCES users (id),
-            FOREIGN KEY (updated_by) REFERENCES users (id)
-        )
-        "#,
-    )
-        .execute(pool)
-        .await?;
+    // ==================== CREATE FTS TABLES ====================
+    create_fts_tables(pool).await?;
 
-    // ==================== CREATE INDEXES ====================
-    
-    // Equipment indexes
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_status ON equipment(status)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_type ON equipment(type_)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_location ON equipment(location)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_serial_number ON equipment(serial_number)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_manufacturer ON equipment(manufacturer)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_next_maintenance ON equipment(next_maintenance)")
-        .execute(pool).await;
+    // ==================== INITIALIZE CACHED FIELDS ====================
+    initialize_reagent_cache(pool).await?;
 
-    // Equipment parts indexes
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_parts_equipment_id ON equipment_parts(equipment_id)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_parts_status ON equipment_parts(status)")
-        .execute(pool).await;
-
-    // Equipment maintenance indexes
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_maintenance_equipment_id ON equipment_maintenance(equipment_id)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_maintenance_status ON equipment_maintenance(status)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_maintenance_scheduled_date ON equipment_maintenance(scheduled_date)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_maintenance_type ON equipment_maintenance(maintenance_type)")
-        .execute(pool).await;
-
-    // Equipment files indexes
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_files_equipment_id ON equipment_files(equipment_id)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_files_part_id ON equipment_files(part_id)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_equipment_files_file_type ON equipment_files(file_type)")
-        .execute(pool).await;
-
-    // Rooms indexes
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_rooms_status ON rooms(status)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_experiments_room_id ON experiments(room_id)")
-        .execute(pool).await;
-
-    // Other indexes
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_reagents_status ON reagents(status)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_reagents_cas ON reagents(cas_number)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_batches_reagent ON batches(reagent_id)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_batches_status ON batches(status)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_batches_expiry ON batches(expiry_date)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_usage_batch ON usage_logs(batch_id)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_usage_user ON usage_logs(user_id)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_table ON audit_logs(table_name)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_record ON audit_logs(record_id)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_experiments_date ON experiments(experiment_date)")
-        .execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_experiments_type ON experiments(experiment_type)")
-        .execute(pool).await;
-
-    // ==================== FTS5 FULL-TEXT SEARCH ====================
-    
-    // Reagents FTS
-    sqlx::query(
-        r#"
-        CREATE VIRTUAL TABLE IF NOT EXISTS reagents_fts USING fts5(
-            name,
-            formula,
-            cas_number,
-            manufacturer,
-            description,
-            storage_conditions,
-            appearance,
-            content='reagents',
-            content_rowid='rowid'
-        )
-        "#,
-    )
-        .execute(pool)
-        .await?;
-
-    // Equipment FTS
-    sqlx::query(
-        r#"
-        CREATE VIRTUAL TABLE IF NOT EXISTS equipment_fts USING fts5(
-            name,
-            description,
-            location,
-            manufacturer,
-            model,
-            serial_number,
-            content='equipment',
-            content_rowid='rowid',
-            tokenize='unicode61'
-        )
-        "#,
-    )
-        .execute(pool)
-        .await?;
-
-    // ==================== AUDIT TRIGGERS ====================
-    
-    let trigger_queries = [
-        // Reagents audit triggers
-        r#"CREATE TRIGGER IF NOT EXISTS reagents_audit_insert
-           AFTER INSERT ON reagents
-           BEGIN
-               INSERT INTO audit_logs (id, user_id, action, table_name, record_id, new_values, created_at)
-               VALUES (
-                   lower(hex(randomblob(16))),
-                   NEW.created_by,
-                   'CREATE',
-                   'reagents',
-                   NEW.id,
-                   json_object('name', NEW.name, 'formula', NEW.formula, 'status', NEW.status),
-                   NEW.created_at
-               );
-           END"#,
-
-        r#"CREATE TRIGGER IF NOT EXISTS reagents_audit_update
-           AFTER UPDATE ON reagents
-           BEGIN
-               INSERT INTO audit_logs (id, user_id, action, table_name, record_id, old_values, new_values, created_at)
-               VALUES (
-                   lower(hex(randomblob(16))),
-                   NEW.updated_by,
-                   'UPDATE',
-                   'reagents',
-                   NEW.id,
-                   json_object('name', OLD.name, 'formula', OLD.formula, 'status', OLD.status),
-                   json_object('name', NEW.name, 'formula', NEW.formula, 'status', NEW.status),
-                   datetime('now')
-               );
-           END"#,
-
-        // Batches audit triggers
-        r#"CREATE TRIGGER IF NOT EXISTS batches_audit_insert
-           AFTER INSERT ON batches
-           BEGIN
-               INSERT INTO audit_logs (id, user_id, action, table_name, record_id, new_values, created_at)
-               VALUES (
-                   lower(hex(randomblob(16))),
-                   NEW.created_by,
-                   'CREATE',
-                   'batches',
-                   NEW.id,
-                   json_object(
-                       'batch_number', NEW.batch_number,
-                       'quantity', NEW.quantity,
-                       'unit', NEW.unit,
-                       'status', NEW.status,
-                       'location', NEW.location
-                   ),
-                   NEW.created_at
-               );
-           END"#,
-
-        r#"CREATE TRIGGER IF NOT EXISTS batches_audit_update
-           AFTER UPDATE ON batches
-           BEGIN
-               INSERT INTO audit_logs (id, user_id, action, table_name, record_id, old_values, new_values, created_at)
-               VALUES (
-                   lower(hex(randomblob(16))),
-                   NEW.updated_by,
-                   'UPDATE',
-                   'batches',
-                   NEW.id,
-                   json_object(
-                       'batch_number', OLD.batch_number,
-                       'quantity', OLD.quantity,
-                       'status', OLD.status
-                   ),
-                   json_object(
-                       'batch_number', NEW.batch_number,
-                       'quantity', NEW.quantity,
-                       'status', NEW.status
-                   ),
-                   datetime('now')
-               );
-           END"#,
-
-        // Equipment audit triggers
-        r#"CREATE TRIGGER IF NOT EXISTS equipment_audit_insert
-            AFTER INSERT ON equipment
-            BEGIN
-                INSERT INTO audit_logs (id, user_id, action, table_name, record_id, new_values, created_at)
-                VALUES (
-                    lower(hex(randomblob(16))),
-                    NEW.created_by,
-                    'CREATE',
-                    'equipment',
-                    NEW.id,
-                    json_object(
-                        'name', NEW.name,
-                        'type_', NEW.type_,
-                        'quantity', NEW.quantity,
-                        'status', NEW.status,
-                        'location', NEW.location,
-                        'serial_number', NEW.serial_number,
-                        'manufacturer', NEW.manufacturer
-                    ),
-                    NEW.created_at
-               );
-         END"#,
-
-        r#"CREATE TRIGGER IF NOT EXISTS equipment_audit_update
-           AFTER UPDATE ON equipment
-           BEGIN
-               INSERT INTO audit_logs (id, user_id, action, table_name, record_id, old_values, new_values, created_at)
-               VALUES (
-                   lower(hex(randomblob(16))),
-                   NEW.updated_by,
-                   'UPDATE',
-                   'equipment',
-                   NEW.id,
-                   json_object(
-                       'name', OLD.name,
-                       'quantity', OLD.quantity,
-                       'status', OLD.status,
-                       'location', OLD.location
-                   ),
-                   json_object(
-                       'name', NEW.name,
-                       'quantity', NEW.quantity,
-                       'status', NEW.status,
-                       'location', NEW.location
-                   ),
-                   datetime('now')
-               );
-           END"#,
-
-        r#"CREATE TRIGGER IF NOT EXISTS equipment_audit_delete
-            BEFORE DELETE ON equipment
-            BEGIN
-                INSERT INTO audit_logs (id, action, table_name, record_id, old_values, created_at)
-                VALUES (
-                    lower(hex(randomblob(16))),
-                    'DELETE',
-                    'equipment',
-                    OLD.id,
-                    json_object(
-                        'name', OLD.name,
-                        'type_', OLD.type_,
-                        'status', OLD.status,
-                        'serial_number', OLD.serial_number
-                    ),
-                    datetime('now')
-                );
-            END"#,
-
-        // Equipment maintenance triggers
-        r#"CREATE TRIGGER IF NOT EXISTS equipment_maintenance_audit_insert
-            AFTER INSERT ON equipment_maintenance
-            BEGIN
-                INSERT INTO audit_logs (id, user_id, action, table_name, record_id, new_values, created_at)
-                VALUES (
-                    lower(hex(randomblob(16))),
-                    NEW.created_by,
-                    'CREATE',
-                    'equipment_maintenance',
-                    NEW.id,
-                    json_object(
-                        'equipment_id', NEW.equipment_id,
-                        'maintenance_type', NEW.maintenance_type,
-                        'status', NEW.status,
-                        'scheduled_date', NEW.scheduled_date
-                    ),
-                    NEW.created_at
-                );
-            END"#,
-
-        r#"CREATE TRIGGER IF NOT EXISTS equipment_maintenance_audit_update
-            AFTER UPDATE ON equipment_maintenance
-            BEGIN
-                INSERT INTO audit_logs (id, action, table_name, record_id, old_values, new_values, created_at)
-                VALUES (
-                    lower(hex(randomblob(16))),
-                    'UPDATE',
-                    'equipment_maintenance',
-                    NEW.id,
-                    json_object('status', OLD.status, 'completed_date', OLD.completed_date),
-                    json_object('status', NEW.status, 'completed_date', NEW.completed_date),
-                    datetime('now')
-                );
-            END"#,
-    ];
-
-    for query in trigger_queries.iter() {
-        let _ = sqlx::query(query).execute(pool).await;
-    }
-    let fts_triggers = [
-        // --- Reagents FTS Sync ---
-        "CREATE TRIGGER IF NOT EXISTS reagents_ai AFTER INSERT ON reagents BEGIN
-           INSERT INTO reagents_fts(rowid, name, formula, cas_number, manufacturer, description, storage_conditions, appearance)
-           VALUES (new.rowid, new.name, new.formula, new.cas_number, new.manufacturer, new.description, new.storage_conditions, new.appearance);
-         END;",
-        "CREATE TRIGGER IF NOT EXISTS reagents_ad AFTER DELETE ON reagents BEGIN
-                INSERT INTO reagents_fts(reagents_fts, rowid, name, formula, cas_number, manufacturer, description, storage_conditions, appearance)
-                VALUES('delete', old.rowid, old.name, old.formula, old.cas_number, old.manufacturer, old.description, old.storage_conditions, old.appearance);
-         END;",
-        "CREATE TRIGGER IF NOT EXISTS reagents_au AFTER UPDATE ON reagents BEGIN
-           INSERT INTO reagents_fts(reagents_fts, rowid, name, formula, cas_number, manufacturer, description, storage_conditions, appearance)
-           VALUES('delete', old.rowid, old.name, old.formula, old.cas_number, old.manufacturer, old.description, old.storage_conditions, old.appearance);
-           INSERT INTO reagents_fts(rowid, name, formula, cas_number, manufacturer, description, storage_conditions, appearance)
-           VALUES (new.rowid, new.name, new.formula, new.cas_number, new.manufacturer, new.description, new.storage_conditions, new.appearance);
-         END;",
-        // --- Equipment FTS Sync (ДОБАВИТЬ ЭТО) ---
-        "CREATE TRIGGER IF NOT EXISTS equipment_ai AFTER INSERT ON equipment BEGIN
-           INSERT INTO equipment_fts(rowid, name, description, location, manufacturer, model, serial_number)
-           VALUES (new.rowid, new.name, new.description, new.location, new.manufacturer, new.model, new.serial_number);
-         END;",
-        "CREATE TRIGGER IF NOT EXISTS equipment_ad AFTER DELETE ON equipment BEGIN
-           INSERT INTO equipment_fts(equipment_fts, rowid, name, description, location, manufacturer, model, serial_number)
-           VALUES('delete', old.rowid, old.name, old.description, old.location, old.manufacturer, old.model, old.serial_number);
-         END;",
-        "CREATE TRIGGER IF NOT EXISTS equipment_au AFTER UPDATE ON equipment BEGIN
-           INSERT INTO equipment_fts(equipment_fts, rowid, name, description, location, manufacturer, model, serial_number)
-           VALUES('delete', old.rowid, old.name, old.description, old.location, old.manufacturer, old.model, old.serial_number);
-           INSERT INTO equipment_fts(rowid, name, description, location, manufacturer, model, serial_number)
-           VALUES (new.rowid, new.name, new.description, new.location, new.manufacturer, new.model, new.serial_number);
-         END;",
-
-
-    ];
-
-    for query in fts_triggers.iter() {
-        let _ = sqlx::query(query).execute(pool).await;
-    }
-
-    // Run migrations for existing tables
-    migrate_existing_tables(pool).await?;
+    // ==================== PERFORMANCE INDEXES ====================
+    ensure_performance_indexes(pool).await?;
 
     Ok(())
 }
 
-// ==================== MIGRATION FOR EXISTING DATABASES ====================
+// ==================== BATCH TRIGGERS ====================
+// Automatically update total_quantity and batches_count in reagents
 
-pub async fn migrate_existing_tables(pool: &SqlitePool) -> Result<()> {
-    // Add new columns to existing tables if they don't exist
+async fn create_batch_triggers(pool: &SqlitePool) -> Result<()> {
+    info!("Creating batch triggers for reagent cache...");
+
+    // Drop old triggers if exist
+    let drop_triggers = [
+        "DROP TRIGGER IF EXISTS trg_batches_insert",
+        "DROP TRIGGER IF EXISTS trg_batches_update",
+        "DROP TRIGGER IF EXISTS trg_batches_delete",
+    ];
+
+    for query in drop_triggers {
+        let _ = sqlx::query(query).execute(pool).await;
+    }
+
+    // INSERT trigger - when adding a batch with status='available'
+    sqlx::query(r#"
+        CREATE TRIGGER IF NOT EXISTS trg_batches_insert
+        AFTER INSERT ON batches
+        WHEN NEW.status = 'available'
+        BEGIN
+            UPDATE reagents SET
+                total_quantity = total_quantity + NEW.quantity,
+                batches_count = batches_count + 1,
+                primary_unit = COALESCE(primary_unit, NEW.unit),
+                updated_at = datetime('now')
+            WHERE id = NEW.reagent_id;
+        END
+    "#)
+        .execute(pool)
+        .await?;
+
+    // DELETE trigger - when deleting a batch with status='available'
+    sqlx::query(r#"
+        CREATE TRIGGER IF NOT EXISTS trg_batches_delete
+        AFTER DELETE ON batches
+        WHEN OLD.status = 'available'
+        BEGIN
+            UPDATE reagents SET
+                total_quantity = MAX(0, total_quantity - OLD.quantity),
+                batches_count = MAX(0, batches_count - 1),
+                updated_at = datetime('now')
+            WHERE id = OLD.reagent_id;
+        END
+    "#)
+        .execute(pool)
+        .await?;
+
+    // UPDATE trigger - full recalculation on change
+    sqlx::query(r#"
+        CREATE TRIGGER IF NOT EXISTS trg_batches_update
+        AFTER UPDATE ON batches
+        BEGIN
+            UPDATE reagents SET
+                total_quantity = (
+                    SELECT COALESCE(SUM(quantity), 0)
+                    FROM batches
+                    WHERE reagent_id = NEW.reagent_id AND status = 'available'
+                ),
+                batches_count = (
+                    SELECT COUNT(*)
+                    FROM batches
+                    WHERE reagent_id = NEW.reagent_id AND status = 'available'
+                ),
+                primary_unit = (
+                    SELECT unit
+                    FROM batches
+                    WHERE reagent_id = NEW.reagent_id AND status = 'available'
+                    LIMIT 1
+                ),
+                updated_at = datetime('now')
+            WHERE id = NEW.reagent_id;
+
+            -- If reagent_id changed, update the old reagent as well
+            UPDATE reagents SET
+                total_quantity = (
+                    SELECT COALESCE(SUM(quantity), 0)
+                    FROM batches
+                    WHERE reagent_id = OLD.reagent_id AND status = 'available'
+                ),
+                batches_count = (
+                    SELECT COUNT(*)
+                    FROM batches
+                    WHERE reagent_id = OLD.reagent_id AND status = 'available'
+                ),
+                primary_unit = (
+                    SELECT unit
+                    FROM batches
+                    WHERE reagent_id = OLD.reagent_id AND status = 'available'
+                    LIMIT 1
+                ),
+                updated_at = datetime('now')
+            WHERE id = OLD.reagent_id AND OLD.reagent_id != NEW.reagent_id;
+        END
+    "#)
+        .execute(pool)
+        .await?;
+
+    info!("Batch triggers created successfully.");
+    Ok(())
+}
+
+// ==================== FTS TABLES ====================
+// Full-text search for fast searching across 100k+ records
+// Search fields: name, cas_number, formula
+
+async fn create_fts_tables(pool: &SqlitePool) -> Result<()> {
+    info!("Creating FTS5 tables for full-text search...");
+
+    // Check if FTS table already exists
+    let exists: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='reagents_fts'"
+    ).fetch_one(pool).await?;
+
+    if exists.0 > 0 {
+        info!("FTS table already exists, skipping creation.");
+        return Ok(());
+    }
+
+    // Create FTS5 virtual table for reagents
+    sqlx::query(r#"
+        CREATE VIRTUAL TABLE reagents_fts USING fts5(
+            name,
+            cas_number,
+            formula,
+            content='reagents',
+            content_rowid='rowid',
+            tokenize='unicode61 remove_diacritics 1'
+        )
+    "#).execute(pool).await?;
+
+    // INSERT trigger - sync new reagents to FTS
+    sqlx::query(r#"
+        CREATE TRIGGER reagents_fts_insert AFTER INSERT ON reagents BEGIN
+            INSERT INTO reagents_fts(rowid, name, cas_number, formula)
+            VALUES (NEW.rowid, NEW.name, NEW.cas_number, NEW.formula);
+        END
+    "#).execute(pool).await?;
+
+    // DELETE trigger - remove from FTS
+    sqlx::query(r#"
+        CREATE TRIGGER reagents_fts_delete AFTER DELETE ON reagents BEGIN
+            INSERT INTO reagents_fts(reagents_fts, rowid, name, cas_number, formula)
+            VALUES ('delete', OLD.rowid, OLD.name, OLD.cas_number, OLD.formula);
+        END
+    "#).execute(pool).await?;
+
+    // UPDATE trigger - update FTS index
+    sqlx::query(r#"
+        CREATE TRIGGER reagents_fts_update AFTER UPDATE ON reagents BEGIN
+            INSERT INTO reagents_fts(reagents_fts, rowid, name, cas_number, formula)
+            VALUES ('delete', OLD.rowid, OLD.name, OLD.cas_number, OLD.formula);
+            INSERT INTO reagents_fts(rowid, name, cas_number, formula)
+            VALUES (NEW.rowid, NEW.name, NEW.cas_number, NEW.formula);
+        END
+    "#).execute(pool).await?;
+
+    // Populate FTS with existing data
+    sqlx::query(r#"
+        INSERT INTO reagents_fts(rowid, name, cas_number, formula)
+        SELECT rowid, name, cas_number, formula FROM reagents
+    "#).execute(pool).await?;
+
+    // Optimize the FTS index
+    let _ = sqlx::query("INSERT INTO reagents_fts(reagents_fts) VALUES('optimize')").execute(pool).await;
+
+    info!("FTS5 table created and populated.");
+    Ok(())
+}
+
+// ==================== INITIALIZE CACHE ====================
+// Populate cached fields for existing data
+
+async fn initialize_reagent_cache(pool: &SqlitePool) -> Result<()> {
+    info!("Initializing reagent cache fields...");
+
+    // Recalculate total_quantity and batches_count from batches
+    let result = sqlx::query(r#"
+        UPDATE reagents SET
+            total_quantity = (
+                SELECT COALESCE(SUM(quantity), 0)
+                FROM batches
+                WHERE reagent_id = reagents.id AND status = 'available'
+            ),
+            batches_count = (
+                SELECT COUNT(*)
+                FROM batches
+                WHERE reagent_id = reagents.id AND status = 'available'
+            ),
+            primary_unit = (
+                SELECT unit
+                FROM batches
+                WHERE reagent_id = reagents.id AND status = 'available'
+                LIMIT 1
+            )
+        WHERE EXISTS (SELECT 1 FROM batches WHERE reagent_id = reagents.id)
+           OR total_quantity != 0
+           OR batches_count != 0
+    "#)
+        .execute(pool)
+        .await?;
+
+    info!("Reagent cache initialized: {} rows updated", result.rows_affected());
+    Ok(())
+}
+
+// ==================== ADDITIONAL MIGRATIONS ====================
+
+async fn run_additional_migrations(pool: &SqlitePool) -> Result<()> {
+    info!("Running additional migrations...");
+
     let migration_queries = [
         // ==================== REAGENTS ====================
-        "ALTER TABLE reagents ADD COLUMN cas_number TEXT CHECK(cas_number IS NULL OR length(cas_number) <= 50)",
-        "ALTER TABLE reagents ADD COLUMN manufacturer TEXT CHECK(manufacturer IS NULL OR length(manufacturer) <= 255)",
-        "ALTER TABLE reagents ADD COLUMN created_by TEXT",
-        "ALTER TABLE reagents ADD COLUMN updated_by TEXT",
-        "ALTER TABLE reagents ADD COLUMN molecular_weight REAL CHECK(molecular_weight IS NULL OR molecular_weight >= 0)",
-        "ALTER TABLE reagents ADD COLUMN storage_conditions TEXT CHECK(storage_conditions IS NULL OR length(storage_conditions) <= 255)",
-        "ALTER TABLE reagents ADD COLUMN appearance TEXT CHECK(appearance IS NULL OR length(appearance) <= 255)",
-        "ALTER TABLE reagents ADD COLUMN hazard_pictograms TEXT CHECK(hazard_pictograms IS NULL OR length(hazard_pictograms) <= 100)",
+        "ALTER TABLE reagents ADD COLUMN total_quantity REAL NOT NULL DEFAULT 0.0",
+        "ALTER TABLE reagents ADD COLUMN batches_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE reagents ADD COLUMN primary_unit TEXT",
+
         // ==================== EQUIPMENT ====================
         "ALTER TABLE equipment ADD COLUMN serial_number TEXT CHECK(serial_number IS NULL OR length(serial_number) <= 100)",
         "ALTER TABLE equipment ADD COLUMN manufacturer TEXT CHECK(manufacturer IS NULL OR length(manufacturer) <= 255)",
@@ -773,7 +647,7 @@ pub async fn migrate_existing_tables(pool: &SqlitePool) -> Result<()> {
         "ALTER TABLE batches ADD COLUMN created_by TEXT",
         "ALTER TABLE batches ADD COLUMN updated_by TEXT",
         "ALTER TABLE batches ADD COLUMN reserved_quantity REAL NOT NULL DEFAULT 0.0 CHECK(reserved_quantity >= 0)",
-        
+
         // ==================== EXPERIMENTS ====================
         "ALTER TABLE experiment_reagents ADD COLUMN is_consumed INTEGER NOT NULL DEFAULT 0 CHECK(is_consumed IN (0, 1))",
         "ALTER TABLE experiments ADD COLUMN location TEXT CHECK(location IS NULL OR length(location) <= 255)",
@@ -791,72 +665,11 @@ pub async fn migrate_existing_tables(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await;
 
-    // ==================== FTS MIGRATIONS ====================
-    // Пересоздаём equipment_fts если она имеет старую схему с equipment_id
-    // Проверяем есть ли колонка equipment_id в FTS (которой не должно быть)
-    let has_old_fts: bool = sqlx::query_scalar(
-        "SELECT COUNT(*) > 0 FROM pragma_table_info('equipment_fts') WHERE name = 'equipment_id'"
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    // ==================== CLEANUP OLD CACHE TABLES ====================
+    let _ = sqlx::query("DROP TABLE IF EXISTS reagent_stock_cache").execute(pool).await;
+    let _ = sqlx::query("DROP TABLE IF EXISTS reagent_count_cache").execute(pool).await;
 
-    if has_old_fts {
-        log::info!("Recreating equipment_fts with correct schema...");
-        
-        // Удаляем старые триггеры
-        let _ = sqlx::query("DROP TRIGGER IF EXISTS equipment_ai").execute(pool).await;
-        let _ = sqlx::query("DROP TRIGGER IF EXISTS equipment_ad").execute(pool).await;
-        let _ = sqlx::query("DROP TRIGGER IF EXISTS equipment_au").execute(pool).await;
-        
-        // Удаляем старую FTS таблицу
-        let _ = sqlx::query("DROP TABLE IF EXISTS equipment_fts").execute(pool).await;
-        
-        // Создаём новую FTS таблицу с правильной схемой
-        let _ = sqlx::query(
-            r#"CREATE VIRTUAL TABLE IF NOT EXISTS equipment_fts USING fts5(
-                name,
-                description,
-                location,
-                manufacturer,
-                model,
-                serial_number,
-                content='equipment',
-                content_rowid='rowid',
-                tokenize='unicode61'
-            )"#
-        ).execute(pool).await;
-        
-        // Пересоздаём триггеры
-        let _ = sqlx::query(
-            "CREATE TRIGGER IF NOT EXISTS equipment_ai AFTER INSERT ON equipment BEGIN
-               INSERT INTO equipment_fts(rowid, name, description, location, manufacturer, model, serial_number)
-               VALUES (new.rowid, new.name, new.description, new.location, new.manufacturer, new.model, new.serial_number);
-             END"
-        ).execute(pool).await;
-        
-        let _ = sqlx::query(
-            "CREATE TRIGGER IF NOT EXISTS equipment_ad AFTER DELETE ON equipment BEGIN
-               INSERT INTO equipment_fts(equipment_fts, rowid, name, description, location, manufacturer, model, serial_number)
-               VALUES('delete', old.rowid, old.name, old.description, old.location, old.manufacturer, old.model, old.serial_number);
-             END"
-        ).execute(pool).await;
-        
-        let _ = sqlx::query(
-            "CREATE TRIGGER IF NOT EXISTS equipment_au AFTER UPDATE ON equipment BEGIN
-               INSERT INTO equipment_fts(equipment_fts, rowid, name, description, location, manufacturer, model, serial_number)
-               VALUES('delete', old.rowid, old.name, old.description, old.location, old.manufacturer, old.model, old.serial_number);
-               INSERT INTO equipment_fts(rowid, name, description, location, manufacturer, model, serial_number)
-               VALUES (new.rowid, new.name, new.description, new.location, new.manufacturer, new.model, new.serial_number);
-             END"
-        ).execute(pool).await;
-        
-        // Перестраиваем FTS индекс из существующих данных
-        let _ = sqlx::query("INSERT INTO equipment_fts(equipment_fts) VALUES('rebuild')").execute(pool).await;
-        
-        log::info!("equipment_fts recreated successfully");
-    }
-
+    info!("Additional migrations completed.");
     Ok(())
 }
 
@@ -866,6 +679,9 @@ pub async fn reset_database(pool: &SqlitePool) -> Result<()> {
     log::warn!("Resetting database - all data will be lost!");
 
     let drop_queries = [
+        "DROP TRIGGER IF EXISTS reagents_fts_insert",
+        "DROP TRIGGER IF EXISTS reagents_fts_update",
+        "DROP TRIGGER IF EXISTS reagents_fts_delete",
         "DROP TABLE IF EXISTS equipment_fts",
         "DROP TABLE IF EXISTS reagents_fts",
         "DROP TABLE IF EXISTS equipment_files",
@@ -882,6 +698,8 @@ pub async fn reset_database(pool: &SqlitePool) -> Result<()> {
         "DROP TABLE IF EXISTS batches",
         "DROP TABLE IF EXISTS reagents",
         "DROP TABLE IF EXISTS users",
+        "DROP TABLE IF EXISTS reagent_stock_cache",
+        "DROP TABLE IF EXISTS reagent_count_cache",
     ];
 
     for query in drop_queries.iter() {
@@ -915,4 +733,51 @@ pub async fn get_table_columns(pool: &SqlitePool, table: &str) -> Result<Vec<Str
         .fetch_all(pool)
         .await?;
     Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+/// Rebuild reagent cache manually (for maintenance)
+pub async fn rebuild_reagent_cache(pool: &SqlitePool) -> Result<u64> {
+    let result = sqlx::query(r#"
+        UPDATE reagents SET
+            total_quantity = (
+                SELECT COALESCE(SUM(quantity), 0)
+                FROM batches
+                WHERE reagent_id = reagents.id AND status = 'available'
+            ),
+            batches_count = (
+                SELECT COUNT(*)
+                FROM batches
+                WHERE reagent_id = reagents.id AND status = 'available'
+            ),
+            primary_unit = (
+                SELECT unit
+                FROM batches
+                WHERE reagent_id = reagents.id AND status = 'available'
+                LIMIT 1
+            ),
+            updated_at = datetime('now')
+    "#)
+        .execute(pool)
+        .await?;
+
+    Ok(result.rows_affected())
+}
+
+/// Rebuild FTS index (for maintenance after bulk imports)
+pub async fn rebuild_fts_index(pool: &SqlitePool) -> Result<u64> {
+    info!("Rebuilding FTS index...");
+
+    // Clear and repopulate
+    let _ = sqlx::query("DELETE FROM reagents_fts").execute(pool).await;
+
+    let result = sqlx::query(r#"
+        INSERT INTO reagents_fts(rowid, name, cas_number, formula)
+        SELECT rowid, name, cas_number, formula FROM reagents
+    "#).execute(pool).await?;
+
+    // Optimize
+    let _ = sqlx::query("INSERT INTO reagents_fts(reagents_fts) VALUES('optimize')").execute(pool).await;
+
+    info!("FTS index rebuilt: {} rows", result.rows_affected());
+    Ok(result.rows_affected())
 }

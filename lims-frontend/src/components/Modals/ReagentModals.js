@@ -9,15 +9,15 @@ import TextArea from '../TextArea';
 import Button from '../Button';
 import FormGroup from '../FormGroup';
 import Table from '../Table';
-import { 
-  CheckIcon, 
-  CloseIcon, 
-  AlertCircleIcon, 
+import {
+  CheckIcon,
+  CloseIcon,
+  AlertCircleIcon,
   FlaskIcon,
   DatabaseIcon,
   PlusIcon,
   EditIcon,
-  TrashIcon 
+  TrashIcon
 } from '../Icons';
 import { styles } from './styles';
 import { useFormSubmit, cleanPayload } from './helpers';
@@ -572,11 +572,11 @@ export const ViewReagentModal = ({ isOpen, onClose, reagent, onEdit }) => {
           <h3 style={{ margin: 0, fontSize: '1rem' }}>📦 Batches in stock</h3>
           <div style={{ display: 'flex', gap: '8px' }}>
             {batches.length > 0 && (
-              <Button variant="secondary" size="sm" onClick={handlePrintAll} icon={<PrinterIcon size={14} />}>
+              <Button variant="secondary" size="small" onClick={handlePrintAll} icon={<PrinterIcon size={14} />}>
                 Print Stickers
               </Button>
             )}
-            <Button variant="primary" size="sm" onClick={() => setShowCreateBatch(true)} icon={<PlusIcon size={14} />}>
+            <Button variant="primary" size="small" onClick={() => setShowCreateBatch(true)} icon={<PlusIcon size={14} />}>
               Add batch
             </Button>
           </div>
@@ -617,11 +617,11 @@ export const ViewReagentModal = ({ isOpen, onClose, reagent, onEdit }) => {
               label: '', 
               render: i => (
                 <div style={{ display: 'flex', gap: '4px' }}>
-                  <Button size="sm" variant="secondary" onClick={() => handleBatchAction('view', i)} icon={<FlaskIcon size={12} />}>
+                  <Button size="small" variant="secondary" onClick={() => handleBatchAction('view', i)} icon={<FlaskIcon size={12} />}>
                     Use
                   </Button>
-                  <Button size="sm" variant="primary" onClick={() => handleBatchAction('edit', i)} icon={<EditIcon size={12} />} />
-                  <Button size="sm" variant="danger" onClick={() => handleBatchAction('delete', i)} icon={<TrashIcon size={12} />} />
+                  <Button size="small" variant="primary" onClick={() => handleBatchAction('edit', i)} icon={<EditIcon size={12} />} />
+                  <Button size="small" variant="danger" onClick={() => handleBatchAction('delete', i)} icon={<TrashIcon size={12} />} />
                 </div>
               )
             }

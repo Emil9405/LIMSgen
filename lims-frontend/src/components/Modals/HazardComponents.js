@@ -108,7 +108,7 @@ export const HazardSelect = ({ selectedCodes, onChange }) => {
 export const HazardDisplay = ({ codes }) => {
   if (!codes) return <span style={{ color: '#a0aec0' }}>—</span>;
   
-  const codeList = codes.split(',').filter(Boolean);
+  const codeList = codes.replace(/\s+/g, '').split(',').filter(Boolean);
   if (codeList.length === 0) return <span style={{ color: '#a0aec0' }}>—</span>;
 
   const iconSize = 80;

@@ -9,6 +9,7 @@ import Button from './Button';
 import Input from './Input';
 import Select from './Select';
 import { CreateUserModal, EditUserModal, ViewUserModal } from './Modals';
+import { KeyIcon, EditIcon, TrashIcon, EyeIcon  } from './Icons';
 
 const Users = ({ user }) => {
   const [users, setUsers] = useState([]);
@@ -251,70 +252,117 @@ const Users = ({ user }) => {
           {loading ? (
             <Loading text="Loading users..." />
           ) : (
-            <Table
-              data={filteredUsers}
-              columns={[
-                { 
-                  key: 'username', 
-                  label: 'Username',
-                  render: (item) => (
-                    <span style={{ fontWeight: '500', color: '#1a365d' }}>
-                      {item.username || '—'}
-                    </span>
-                  )
-                },
-                { key: 'name', label: 'Full Name' },
-                { key: 'email', label: 'Email' },
-                {
-                  key: 'role',
-                  label: 'Role',
-                  render: (item) => {
-                    const roleColors = {
-                      'Admin': { bg: '#fed7d7', color: '#c53030' },
-                      'Researcher': { bg: '#c6f6d5', color: '#2f855a' },
-                      'Technician': { bg: '#bee3f8', color: '#2b6cb0' }
-                    };
-                    const style = roleColors[item.role] || { bg: '#e2e8f0', color: '#4a5568' };
-                    return (
-                      <Badge style={{ backgroundColor: style.bg, color: style.color }}>
-                        {item.role || 'Unknown'}
-                      </Badge>
-                    );
+              <Table
+                  data={filteredUsers}
+                  columns={[
+                    {
+                      key: 'username',
+                      label: 'Username',
+                      render: (item) => (
+                          <span style={{ fontWeight: '500', color: '#1a365d' }}>
+                  {item.username || '—'}
+                </span>
+                      )
+                    },
+                    { key: 'name', label: 'Full Name' },
+                    { key: 'email', label: 'Email' },
+                    {
+                      key: 'role',
+                      label: 'Role',
+                      render: (item) => {
+                        const roleColors = {
+                          'Admin': { bg: '#fed7d7', color: '#c53030' },
+                          'Researcher': { bg: '#c6f6d5', color: '#2f855a' },
+                          'Technician': { bg: '#bee3f8', color: '#2b6cb0' }
+                        };
+                        const style = roleColors[item.role] || { bg: '#e2e8f0', color: '#4a5568' };
+                        return (
+                            <Badge style={{ backgroundColor: style.bg, color: style.color }}>
+                              {item.role || 'Unknown'}
+                            </Badge>
+                        );
+                      }
+                    },
+                    {
+                      key: 'is_active',
+                      label: 'Status',
+                      render: (item) => (
+                          <span style={{
+                            color: item.is_active !== false ? '#38a169' : '#e53e3e',
+                            fontWeight: '500'
+                          }}>
+                  {item.is_active !== false ? '● Active' : '● Inactive'}
+                </span>
+                      )
+                    },
+                    {
+                      key: 'created_at',
+                      label: 'Created',
+                      render: (item) => item.created_at
+                          ? new Date(item.created_at).toLocaleDateString('ru-RU')
+                          : '—'
+                    },
+                    // --- КОЛОНКА С ИКОНКАМИ ---
+                    {
+                      key: 'actions',
+                      label: 'Actions',
+                      render: (item) => (
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            {/* Просмотр */}
+                            <Button
+                                variant="secondary"
+                                onClick={() => handleAction('view', item)}
+                                style={{ padding: '6px', display: 'flex', alignItems: 'center' }}
+                                title="View Details"
+                            >
+                              <EyeIcon size={16} />
+                            </Button>
+
+                            {/* Редактирование */}
+                            <Button
+                                variant="secondary"
+                                onClick={() => handleAction('edit', item)}
+                                style={{ padding: '6px', display: 'flex', alignItems: 'center' }}
+                                title="Edit User"
+                            >
+                              <EditIcon size={16} />
+                            </Button>
+
+                            {/* Сброс пароля (Желтая кнопка) */}
+                            <Button
+                                onClick={() => handleAction('reset', item)}
+                                style={{
+                                  padding: '6px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  backgroundColor: '#ecc94b',
+                                  color: 'white',
+                                  border: 'none'
+                                }}
+                                title="Reset Password"
+                            >
+                              <KeyIcon size={16} />
+                            </Button>
+
+                            {/* Удаление */}
+                            <Button
+                                variant="danger"
+                                onClick={() => handleAction('delete', item)}
+                                style={{ padding: '6px', display: 'flex', alignItems: 'center' }}
+                                title="Delete User"
+                            >
+                              <TrashIcon size={16} />
+                            </Button>
+                          </div>
+                      )
+                    }
+                  ]}
+                  emptyMessage={
+                    users.length === 0
+                        ? "No users found in the system."
+                        : "No users match your search criteria."
                   }
-                },
-                {
-                  key: 'is_active',
-                  label: 'Status',
-                  render: (item) => (
-                    <span style={{ 
-                      color: item.is_active !== false ? '#38a169' : '#e53e3e',
-                      fontWeight: '500'
-                    }}>
-                      {item.is_active !== false ? '● Active' : '● Inactive'}
-                    </span>
-                  )
-                },
-                { 
-                  key: 'created_at', 
-                  label: 'Created',
-                  render: (item) => item.created_at 
-                    ? new Date(item.created_at).toLocaleDateString('ru-RU')
-                    : '—'
-                }
-              ]}
-              actions={{
-                view: true,
-                edit: true,
-                delete: true,
-                reset: true
-              }}
-              onAction={handleAction}
-              emptyMessage={
-                users.length === 0 
-                  ? "No users found in the system."
-                  : "No users match your search criteria."
-              }
-            />
+              />
           )}
         </div>
       </div>

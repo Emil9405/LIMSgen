@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use validator::Validate;
 use chrono::{DateTime, Utc};
 
-// ==================== REAGENT (РЕАКТИВ) ====================
+// ==================== REAGENT ====================
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
 pub struct Reagent {
@@ -19,6 +19,11 @@ pub struct Reagent {
     pub appearance: Option<String>,
     pub hazard_pictograms: Option<String>,
     pub status: String,
+    // Cached aggregation fields (обновляются триггерами при изменении batches)
+    pub total_quantity: f64,
+    pub batches_count: i64,
+    pub primary_unit: Option<String>,
+    // Audit fields
     pub created_by: Option<String>,
     pub updated_by: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -93,16 +98,72 @@ pub struct UpdateReagentRequest {
     pub status: Option<String>,
 }
 
-// ==================== REAGENT WITH STOCK ====================
+// ==================== REAGENT WITH STOCK (legacy compatibility) ====================
 
+/// Для обратной совместимости со старым API
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct ReagentWithStock {
-    #[serde(flatten)]
-    pub reagent: Reagent,
-    pub total_quantity: Option<f64>,
-    pub reserved_quantity: Option<f64>,
-    pub available_quantity: Option<f64>,
+    // Reagent fields
+    pub id: String,
+    pub name: String,
+    pub formula: Option<String>,
+    pub cas_number: Option<String>,
+    pub manufacturer: Option<String>,
+    pub molecular_weight: Option<f64>,
+    pub physical_state: Option<String>,
+    pub description: Option<String>,
+    pub storage_conditions: Option<String>,
+    pub appearance: Option<String>,
+    pub hazard_pictograms: Option<String>,
+    pub status: String,
+    pub created_by: Option<String>,
+    pub updated_by: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    // Stock fields
+    pub total_quantity: f64,
     pub batches_count: i64,
+    pub primary_unit: Option<String>,
+    // Computed fields (for backward compatibility)
+    #[sqlx(default)]
+    pub reserved_quantity: f64,
+    #[sqlx(default)]
+    pub available_quantity: f64,
     #[sqlx(default)]
     pub total_display: String,
+}
+
+impl From<Reagent> for ReagentWithStock {
+    fn from(r: Reagent) -> Self {
+        let total_display = if r.total_quantity > 0.0 {
+            format!("{:.2} {}", r.total_quantity, r.primary_unit.as_deref().unwrap_or(""))
+        } else {
+            "No stock".to_string()
+        };
+        
+        Self {
+            id: r.id,
+            name: r.name,
+            formula: r.formula,
+            cas_number: r.cas_number,
+            manufacturer: r.manufacturer,
+            molecular_weight: r.molecular_weight,
+            physical_state: r.physical_state,
+            description: r.description,
+            storage_conditions: r.storage_conditions,
+            appearance: r.appearance,
+            hazard_pictograms: r.hazard_pictograms,
+            status: r.status,
+            created_by: r.created_by,
+            updated_by: r.updated_by,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+            total_quantity: r.total_quantity,
+            batches_count: r.batches_count,
+            primary_unit: r.primary_unit,
+            reserved_quantity: 0.0,
+            available_quantity: r.total_quantity,
+            total_display,
+        }
+    }
 }
