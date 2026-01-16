@@ -36,6 +36,14 @@ import {
   DatabaseIcon
 } from './Icons';
 
+// Use icon for consuming reagents
+const UseIcon = ({ size = 24, color = "currentColor" }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 12h14"></path>
+      <circle cx="12" cy="12" r="10"></circle>
+    </svg>
+);
+
 // Local PrinterIcon fallback
 const PrinterIcon = ({ size = 24, color = "currentColor" }) => (
     <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -379,6 +387,9 @@ const ReagentAccordionItem = ({
                             <div style={expiryStatus.style}>{expiryStatus.text}</div>
                             <div style={accordionStyles.batchValue}>{batch.storage_location || batch.location || '—'}</div>
                             <div style={{ display: 'flex', gap: '4px' }}>
+                              {batch.status === 'available' && (
+                                <Button size="small" variant="primary" onClick={() => { setSelectedBatch(batch); setShowUsageHistory(true); }} icon={<UseIcon size={14} />} style={{ backgroundColor: '#38a169' }}>Use</Button>
+                              )}
                               <Button size="small" variant="ghost" onClick={() => { setSelectedBatch(batch); setShowUsageHistory(true); }} icon={<ClockIcon size={14} />}>History</Button>
                               {canEdit && <Button size="small" variant="secondary" onClick={() => { setSelectedBatch(batch); setShowEditBatch(true); }} icon={<EditIcon size={14} />}>Edit</Button>}
                               {canDelete && <Button size="small" variant="danger" onClick={() => handleDeleteBatch(batch)} icon={<TrashIcon size={14} />}>Delete</Button>}
@@ -391,7 +402,7 @@ const ReagentAccordionItem = ({
 
               {showCreateBatch && <CreateBatchModal isOpen={showCreateBatch} reagentId={reagent.id} reagentName={reagent.name} onClose={() => setShowCreateBatch(false)} onSave={handleBatchCreated} />}
               {showEditBatch && selectedBatch && <EditBatchModal isOpen={showEditBatch} batch={selectedBatch} onClose={() => { setShowEditBatch(false); setSelectedBatch(null); }} onSave={handleBatchUpdated} />}
-              {showUsageHistory && selectedBatch && <UsageHistoryModal isOpen={showUsageHistory} batch={selectedBatch} onClose={() => { setShowUsageHistory(false); setSelectedBatch(null); }} />}
+              {showUsageHistory && selectedBatch && <UsageHistoryModal isOpen={showUsageHistory} reagentId={reagent.id} batchId={selectedBatch.id} batch={selectedBatch} onClose={() => { setShowUsageHistory(false); setSelectedBatch(null); }} onSave={handleBatchUpdated} />}
             </div>
         )}
 
@@ -483,7 +494,13 @@ const Reagents = ({ user }) => {
     loadReferenceData();
   }, []);
 
-  const canEditReagents = () => ['Admin', 'Researcher'].includes(user?.role);
+  // Debug: uncomment to see user role
+  // console.log('User role:', user?.role, 'typeof:', typeof user?.role);
+  
+  const userRole = (user?.role || '').toString().toLowerCase();
+  const isAdmin = userRole === 'admin';
+  const isResearcher = userRole === 'researcher';
+  const canEditReagents = () => isAdmin || isResearcher;
 
   const handleAction = async (action, reagent) => {
     switch (action) {
@@ -675,7 +692,7 @@ const Reagents = ({ user }) => {
                       onAction={handleAction}
                       onReagentsRefresh={refresh}
                       canEdit={canEditReagents()}
-                      canDelete={user?.role === 'Admin'}
+                      canDelete={isAdmin}
                   />
               ))
           )}

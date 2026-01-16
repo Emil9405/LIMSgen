@@ -25,6 +25,12 @@ pub async fn ensure_performance_indexes(pool: &SqlitePool) -> Result<(), sqlx::E
 
         // Audit logs
         r#"CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);"#,
+        r#"CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);"#,
+        r#"CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);"#,
+        r#"CREATE INDEX IF NOT EXISTS idx_audit_logs_entity_type ON audit_logs(entity_type);"#,
+
+        // User permissions
+        r#"CREATE INDEX IF NOT EXISTS idx_user_permissions_user_id ON user_permissions(user_id);"#,
     ];
 
     for query in queries {
@@ -288,12 +294,29 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
             action TEXT NOT NULL,
             entity_type TEXT NOT NULL,
             entity_id TEXT,
+            description TEXT,
             old_value TEXT,
             new_value TEXT,
+            changes TEXT,
             ip_address TEXT,
             user_agent TEXT,
             created_at DATETIME NOT NULL,
-            FOREIGN KEY (user_id) REFERENCES users (id)
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL
+        )
+        "#,
+    )
+        .execute(pool)
+        .await?;
+
+    // ==================== USER_PERMISSIONS TABLE ====================
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS user_permissions (
+            user_id TEXT PRIMARY KEY,
+            permissions TEXT NOT NULL DEFAULT '{}',
+            created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+            updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         )
         "#,
     )
@@ -653,6 +676,15 @@ async fn run_additional_migrations(pool: &SqlitePool) -> Result<()> {
         "ALTER TABLE experiments ADD COLUMN location TEXT CHECK(location IS NULL OR length(location) <= 255)",
         "ALTER TABLE experiments ADD COLUMN room_id TEXT REFERENCES rooms(id)",
         "ALTER TABLE experiments ADD COLUMN experiment_type TEXT NOT NULL DEFAULT 'research' CHECK(experiment_type IN ('educational', 'research'))",
+
+        // ==================== AUDIT_LOGS ====================
+        "ALTER TABLE audit_logs ADD COLUMN description TEXT",
+        "ALTER TABLE audit_logs ADD COLUMN changes TEXT",
+
+        // ==================== ROOMS ====================
+        "ALTER TABLE rooms ADD COLUMN color TEXT CHECK(color IS NULL OR length(color) <= 20)",
+        "ALTER TABLE rooms ADD COLUMN created_by TEXT REFERENCES users(id)",
+        "ALTER TABLE rooms ADD COLUMN updated_by TEXT REFERENCES users(id)",
     ];
 
     for query in migration_queries.iter() {
@@ -695,6 +727,7 @@ pub async fn reset_database(pool: &SqlitePool) -> Result<()> {
         "DROP TABLE IF EXISTS equipment",
         "DROP TABLE IF EXISTS audit_logs",
         "DROP TABLE IF EXISTS usage_logs",
+        "DROP TABLE IF EXISTS user_permissions",
         "DROP TABLE IF EXISTS batches",
         "DROP TABLE IF EXISTS reagents",
         "DROP TABLE IF EXISTS users",

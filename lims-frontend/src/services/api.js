@@ -216,8 +216,9 @@ export const api = {
         });
     },
 
-    deleteUser: async (id) => {
-        return await apiCall(`${API_V1_BASE}/auth/users/${id}`, {
+    deleteUser: async (id, force = false) => {
+        const queryParam = force ? '?force=true' : '';
+        return await apiCall(`${API_V1_BASE}/auth/users/${id}${queryParam}`, {
             method: 'DELETE',
         });
     },
@@ -227,6 +228,28 @@ export const api = {
             method: 'PUT',
             body: JSON.stringify({ new_password: newPassword }),
         });
+    },
+
+    // ==================== USER PERMISSIONS ====================
+
+    getUserPermissions: async (userId) => {
+        const response = await apiCall(`${API_V1_BASE}/auth/users/${userId}/permissions`);
+        return response.data || response;
+    },
+
+    updateUserPermissions: async (userId, permissions) => {
+        return await apiCall(`${API_V1_BASE}/auth/users/${userId}/permissions`, {
+            method: 'PUT',
+            body: JSON.stringify({ permissions }),
+        });
+    },
+
+    // ==================== USER ACTIVITY ====================
+
+    getUserActivity: async (userId, params = {}) => {
+        const queryString = new URLSearchParams(params).toString();
+        const response = await apiCall(`${API_V1_BASE}/auth/users/${userId}/activity?${queryString}`);
+        return response.data || response;
     },
 
     // ==================== REAGENTS (UPDATED) ====================

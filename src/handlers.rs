@@ -222,16 +222,17 @@ pub async fn use_reagent(
     let mut tx = app_state.db_pool.begin().await?;
 
     sqlx::query(
-        r#"INSERT INTO usage_logs (id, batch_id, user_id, quantity_used, purpose, notes, used_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#
+        r#"INSERT INTO usage_logs (id, reagent_id, batch_id, user_id, quantity_used, unit, purpose, notes, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#
     )
         .bind(&usage_id)
+        .bind(&reagent_id)
         .bind(&batch_id)
         .bind(&claims.sub)
         .bind(request.quantity_used)
+        .bind(&batch.unit)
         .bind(&request.purpose)
         .bind(&request.notes)
-        .bind(&now)
         .bind(&now)
         .execute(&mut *tx)
         .await?;
@@ -300,13 +301,13 @@ pub async fn get_usage_history(
             b.unit as unit,
             ul.purpose,
             ul.notes,
-            ul.used_at,
+            ul.created_at as used_at,
             ul.created_at
            FROM usage_logs ul
            LEFT JOIN users u ON ul.user_id = u.id
            LEFT JOIN batches b ON ul.batch_id = b.id
            WHERE ul.batch_id = ?
-           ORDER BY ul.used_at DESC
+           ORDER BY ul.created_at DESC
            LIMIT ? OFFSET ?"#
     )
         .bind(&batch_id)

@@ -139,7 +139,7 @@ async fn create_experiment_protected(
     experiment: web::Json<crate::models::experiment::CreateExperimentRequest>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission(&http_request, auth_handlers::ReagentAction::Create)?;
+    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Create, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     create_experiment(app_state, experiment, claims.sub).await
 }
@@ -150,7 +150,7 @@ async fn update_experiment_protected(
     update_data: web::Json<crate::models::experiment::UpdateExperimentRequest>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission(&http_request, auth_handlers::ReagentAction::Edit)?;
+    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     update_experiment(app_state, path, update_data, claims.sub).await
 }
@@ -160,7 +160,7 @@ async fn delete_experiment_protected(
     path: web::Path<String>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission(&http_request, auth_handlers::ReagentAction::Delete)?;
+    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Delete, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     // FIXED: pass user_id as third argument
     delete_experiment(app_state, path, claims.sub).await
@@ -172,7 +172,7 @@ async fn add_experiment_reagent_protected(
     reagent: web::Json<experiment_handlers::AddReagentToExperimentRequest>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission(&http_request, auth_handlers::ReagentAction::Edit)?;
+    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     // FIXED: pass correct type and user_id
     add_reagent_to_experiment(app_state, path, reagent, claims.sub).await
@@ -183,7 +183,7 @@ async fn remove_experiment_reagent_protected(
     path: web::Path<(String, String)>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission(&http_request, auth_handlers::ReagentAction::Edit)?;
+    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     remove_reagent_from_experiment(app_state, path, claims.sub).await
 }
@@ -193,7 +193,7 @@ async fn start_experiment_protected(
     path: web::Path<String>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission(&http_request, auth_handlers::ReagentAction::Edit)?;
+    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     start_experiment(app_state, path, claims.sub).await
 }
@@ -203,7 +203,7 @@ async fn complete_experiment_protected(
     path: web::Path<String>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission(&http_request, auth_handlers::ReagentAction::Edit)?;
+    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     complete_experiment(app_state, path, claims.sub).await
 }
@@ -213,7 +213,7 @@ async fn cancel_experiment_protected(
     path: web::Path<String>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission(&http_request, auth_handlers::ReagentAction::Edit)?;
+    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     cancel_experiment(app_state, path, claims.sub).await
 }
@@ -223,7 +223,7 @@ async fn consume_experiment_reagent_protected(
     path: web::Path<(String, String)>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission(&http_request, auth_handlers::ReagentAction::Edit)?;
+    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     consume_experiment_reagent(app_state, path, claims.sub).await
 }
@@ -241,7 +241,7 @@ async fn create_reagent_protected(
     reagent: web::Json<crate::models::reagent::CreateReagentRequest>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission(&http_request, auth_handlers::ReagentAction::Create)?;
+    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Create, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     reagent_handlers::create_reagent(app_state, reagent, claims.sub).await
 }
@@ -252,7 +252,7 @@ async fn update_reagent_protected(
     update_data: web::Json<crate::models::reagent::UpdateReagentRequest>,
     http_request: HttpRequest,
 ) -> error::ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission(&http_request, auth_handlers::ReagentAction::Edit)?;
+    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     reagent_handlers::update_reagent(app_state, path, update_data, claims.sub).await
 }
@@ -262,7 +262,7 @@ async fn delete_reagent_protected(
     path: web::Path<String>,
     http_request: HttpRequest,
 ) -> error::ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission(&http_request, auth_handlers::ReagentAction::Delete)?;
+    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Delete, &app_state.db_pool).await?;
     reagent_handlers::delete_reagent(app_state, path).await
 }
 
@@ -274,7 +274,7 @@ async fn create_batch_protected(
     batch: web::Json<crate::models::batch::CreateBatchRequest>,
     http_request: HttpRequest,
 ) -> error::ApiResult<HttpResponse> {
-    auth_handlers::check_batch_permission(&http_request, auth_handlers::BatchAction::Create)?;
+    auth_handlers::check_batch_permission_async(&http_request, auth_handlers::BatchAction::Create, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     batch_handlers::create_batch(app_state, path, batch, claims.sub).await
 }
@@ -285,7 +285,7 @@ async fn update_batch_protected(
     update_data: web::Json<crate::models::batch::UpdateBatchRequest>,
     http_request: HttpRequest,
 ) -> error::ApiResult<HttpResponse> {
-    auth_handlers::check_batch_permission(&http_request, auth_handlers::BatchAction::Edit)?;
+    auth_handlers::check_batch_permission_async(&http_request, auth_handlers::BatchAction::Edit, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     batch_handlers::update_batch(app_state, path, update_data, claims.sub).await
 }
@@ -295,7 +295,7 @@ async fn delete_batch_protected(
     path: web::Path<(String, String)>,
     http_request: HttpRequest,
 ) -> error::ApiResult<HttpResponse> {
-    auth_handlers::check_batch_permission(&http_request, auth_handlers::BatchAction::Delete)?;
+    auth_handlers::check_batch_permission_async(&http_request, auth_handlers::BatchAction::Delete, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     // FIXED: pass user_id as third argument
     batch_handlers::delete_batch(app_state, path, claims.sub).await
@@ -308,7 +308,7 @@ async fn create_equipment_protected(
     equipment: web::Json<CreateEquipmentRequest>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Create)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Create, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     equipment_handlers::create_equipment(app_state, equipment, claims.sub).await
 }
@@ -319,7 +319,7 @@ async fn update_equipment_protected(
     update_data: web::Json<UpdateEquipmentRequest>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     equipment_handlers::update_equipment(app_state, path, update_data, claims.sub).await
 }
@@ -329,7 +329,7 @@ async fn delete_equipment_protected(
     path: web::Path<String>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete, &app_state.db_pool).await?;
     equipment_handlers::delete_equipment(app_state, path).await
 }
 
@@ -348,7 +348,7 @@ async fn add_equipment_part_protected(
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
     let claims = auth_handlers::get_claims_from_request(&http_request)?;
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit, &app_state.db_pool).await?;
     add_equipment_part(app_state, path, part, claims.sub).await
 }
 
@@ -359,7 +359,7 @@ async fn update_equipment_part_protected(
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
     let claims = auth_handlers::get_claims_from_request(&http_request)?;
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit, &app_state.db_pool).await?;
     update_equipment_part(app_state, path, update, claims.sub).await
 }
 
@@ -368,7 +368,7 @@ async fn delete_equipment_part_protected(
     path: web::Path<(String, String)>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete, &app_state.db_pool).await?;
     delete_equipment_part(app_state, path).await
 }
 
@@ -387,7 +387,7 @@ async fn create_maintenance_protected(
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
     let claims = auth_handlers::get_claims_from_request(&http_request)?;
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit, &app_state.db_pool).await?;
     create_maintenance(app_state, path, maintenance, claims.sub).await
 }
 
@@ -398,7 +398,7 @@ async fn update_maintenance_protected(
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
     let claims = auth_handlers::get_claims_from_request(&http_request)?;
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit, &app_state.db_pool).await?;
     update_maintenance(app_state, path, update, claims.sub).await
 }
 
@@ -409,7 +409,7 @@ async fn complete_maintenance_protected(
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
     let claims = auth_handlers::get_claims_from_request(&http_request)?;
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit, &app_state.db_pool).await?;
     complete_maintenance(app_state, path, body, claims.sub).await
 }
 
@@ -418,7 +418,7 @@ async fn delete_maintenance_protected(
     path: web::Path<(String, String)>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete, &app_state.db_pool).await?;
     delete_maintenance(app_state, path).await
 }
 
@@ -437,7 +437,7 @@ async fn upload_equipment_file_protected(
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
     let claims = auth_handlers::get_claims_from_request(&http_request)?;
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit, &app_state.db_pool).await?;
     upload_equipment_file(app_state, path, payload, claims.sub).await
 }
 
@@ -453,7 +453,7 @@ async fn delete_equipment_file_protected(
     path: web::Path<(String, String)>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete, &app_state.db_pool).await?;
     delete_equipment_file(app_state, path).await
 }
 
@@ -471,7 +471,7 @@ async fn create_room_protected(
     room: web::Json<crate::models::room::CreateRoomRequest>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Create)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Create, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     room_handlers::create_room(app_state, room, claims.sub).await
 }
@@ -482,7 +482,7 @@ async fn update_room_protected(
     update_data: web::Json<crate::models::room::UpdateRoomRequest>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     room_handlers::update_room(app_state, path, update_data, claims.sub).await
 }
@@ -492,7 +492,7 @@ async fn delete_room_protected(
     path: web::Path<String>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete)?;
+    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete, &app_state.db_pool).await?;
     room_handlers::delete_room(app_state, path).await
 }
 
@@ -631,6 +631,10 @@ async fn main() -> anyhow::Result<()> {
                             .route("/users/{id}", web::put().to(update_user))
                             .route("/users/{id}", web::delete().to(delete_user))
                             .route("/users/{id}/reset-password", web::put().to(change_user_password))
+                            // User Permissions & Activity
+                            .route("/users/{id}/permissions", web::get().to(auth_handlers::get_user_permissions))
+                            .route("/users/{id}/permissions", web::put().to(auth_handlers::update_user_permissions))
+                            .route("/users/{id}/activity", web::get().to(auth_handlers::get_user_activity))
                             .route("/jwt/status", web::get().to(get_jwt_rotation_status))
                             .route("/jwt/rotate", web::post().to(force_jwt_rotation))
                     )

@@ -810,45 +810,231 @@ pub fn check_batch_permission(
     }
 }
 
-pub fn check_equipment_permission(
+/// Async version that checks custom permissions from user_permissions table
+pub async fn check_batch_permission_async(
+    http_request: &HttpRequest,
+    action: BatchAction,
+    pool: &sqlx::SqlitePool,
+) -> ApiResult<()> {
+    let claims = get_current_user(http_request)?;
+
+    // First check role-based permissions
+    let role_allowed = match action {
+        BatchAction::Create => claims.role.can_create_batches(),
+        BatchAction::Edit => claims.role.can_edit_batches(),
+        BatchAction::Delete => claims.role.can_delete_batches(),
+        BatchAction::View => true,
+    };
+
+    if role_allowed {
+        return Ok(());
+    }
+
+    // If role doesn't allow, check custom permissions from user_permissions table
+    let permission_key = match action {
+        BatchAction::Create => "create_batch",
+        BatchAction::Edit => "edit_batch",
+        BatchAction::Delete => "delete_batch",
+        BatchAction::View => return Ok(()),
+    };
+
+    let result: Option<(String,)> = sqlx::query_as(
+        "SELECT permissions FROM user_permissions WHERE user_id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        log::error!("DB error checking permissions: {:?}", e);
+        ApiError::InternalServerError("Database error".to_string())
+    })?;
+
+    if let Some((perms_json,)) = result {
+        if let Ok(perms) = serde_json::from_str::<std::collections::HashMap<String, bool>>(&perms_json) {
+            if perms.get(permission_key).copied().unwrap_or(false) {
+                log::info!("User {} granted {} via custom permissions", claims.username, permission_key);
+                return Ok(());
+            }
+        }
+    }
+
+    Err(ApiError::Forbidden("Insufficient permissions".to_string()))
+}
+
+/// Async version for reagent permissions
+pub async fn check_reagent_permission_async(
+    http_request: &HttpRequest,
+    action: ReagentAction,
+    pool: &sqlx::SqlitePool,
+) -> ApiResult<()> {
+    let claims = get_current_user(http_request)?;
+
+    let role_allowed = match action {
+        ReagentAction::Create => claims.role.can_create_reagents(),
+        ReagentAction::Edit => claims.role.can_edit_reagents(),
+        ReagentAction::Delete => claims.role.can_delete_reagents(),
+        ReagentAction::View => true,
+    };
+
+    if role_allowed {
+        return Ok(());
+    }
+
+    let permission_key = match action {
+        ReagentAction::Create => "create_reagent",
+        ReagentAction::Edit => "edit_reagent",
+        ReagentAction::Delete => "delete_reagent",
+        ReagentAction::View => return Ok(()),
+    };
+
+    let result: Option<(String,)> = sqlx::query_as(
+        "SELECT permissions FROM user_permissions WHERE user_id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::InternalServerError("Database error".to_string()))?;
+
+    if let Some((perms_json,)) = result {
+        if let Ok(perms) = serde_json::from_str::<std::collections::HashMap<String, bool>>(&perms_json) {
+            if perms.get(permission_key).copied().unwrap_or(false) {
+                return Ok(());
+            }
+        }
+    }
+
+    Err(ApiError::Forbidden("Insufficient permissions".to_string()))
+}
+
+pub async fn check_equipment_permission(
     http_request: &HttpRequest,
     action: EquipmentAction,
+    pool: &sqlx::SqlitePool,
 ) -> ApiResult<()> {
     let claims = get_current_user(http_request)?;
 
-    match action {
+    let role_allowed = match action {
         EquipmentAction::Create | EquipmentAction::Edit | EquipmentAction::Delete =>
-            check_permission(&claims, |role| role.can_manage_equipment()),
-        EquipmentAction::View => Ok(()), // All can view
+            claims.role.can_manage_equipment(),
+        EquipmentAction::View => true,
+    };
+
+    if role_allowed {
+        return Ok(());
     }
+
+    let permission_key = match action {
+        EquipmentAction::Create => "create_equipment",
+        EquipmentAction::Edit => "edit_equipment",
+        EquipmentAction::Delete => "delete_equipment",
+        EquipmentAction::View => return Ok(()),
+    };
+
+    let result: Option<(String,)> = sqlx::query_as(
+        "SELECT permissions FROM user_permissions WHERE user_id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::InternalServerError("Database error".to_string()))?;
+
+    if let Some((perms_json,)) = result {
+        if let Ok(perms) = serde_json::from_str::<std::collections::HashMap<String, bool>>(&perms_json) {
+            if perms.get(permission_key).copied().unwrap_or(false) {
+                return Ok(());
+            }
+        }
+    }
+
+    Err(ApiError::Forbidden("Insufficient permissions".to_string()))
 }
 
-pub fn check_experiment_permission(
+pub async fn check_experiment_permission(
     http_request: &HttpRequest,
     action: ExperimentAction,
+    pool: &sqlx::SqlitePool,
 ) -> ApiResult<()> {
     let claims = get_current_user(http_request)?;
 
-    match action {
-        ExperimentAction::Create => check_permission(&claims, |role| role.can_create_experiments()),
-        ExperimentAction::Edit => check_permission(&claims, |role| role.can_edit_experiments()),
-        ExperimentAction::Delete => check_permission(&claims, |role| role.can_delete_experiments()),
-        ExperimentAction::View => Ok(()), // All can view
+    let role_allowed = match action {
+        ExperimentAction::Create => claims.role.can_create_experiments(),
+        ExperimentAction::Edit => claims.role.can_edit_experiments(),
+        ExperimentAction::Delete => claims.role.can_delete_experiments(),
+        ExperimentAction::View => true,
+    };
+
+    if role_allowed {
+        return Ok(());
     }
+
+    let permission_key = match action {
+        ExperimentAction::Create => "create_experiment",
+        ExperimentAction::Edit => "edit_experiment",
+        ExperimentAction::Delete => "delete_experiment",
+        ExperimentAction::View => return Ok(()),
+    };
+
+    let result: Option<(String,)> = sqlx::query_as(
+        "SELECT permissions FROM user_permissions WHERE user_id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::InternalServerError("Database error".to_string()))?;
+
+    if let Some((perms_json,)) = result {
+        if let Ok(perms) = serde_json::from_str::<std::collections::HashMap<String, bool>>(&perms_json) {
+            if perms.get(permission_key).copied().unwrap_or(false) {
+                return Ok(());
+            }
+        }
+    }
+
+    Err(ApiError::Forbidden("Insufficient permissions".to_string()))
 }
 
-pub fn check_room_permission(
+pub async fn check_room_permission(
     http_request: &HttpRequest,
     action: RoomAction,
+    pool: &sqlx::SqlitePool,
 ) -> ApiResult<()> {
     let claims = get_current_user(http_request)?;
 
-    match action {
-        RoomAction::Create => check_permission(&claims, |role| role.can_create_rooms()),
-        RoomAction::Edit => check_permission(&claims, |role| role.can_edit_rooms()),
-        RoomAction::Delete => check_permission(&claims, |role| role.can_delete_rooms()),
-        RoomAction::View => Ok(()), // All can view
+    let role_allowed = match action {
+        RoomAction::Create => claims.role.can_create_rooms(),
+        RoomAction::Edit => claims.role.can_edit_rooms(),
+        RoomAction::Delete => claims.role.can_delete_rooms(),
+        RoomAction::View => true,
+    };
+
+    if role_allowed {
+        return Ok(());
     }
+
+    let permission_key = match action {
+        RoomAction::Create => "create_room",
+        RoomAction::Edit => "edit_room",
+        RoomAction::Delete => "delete_room",
+        RoomAction::View => return Ok(()),
+    };
+
+    let result: Option<(String,)> = sqlx::query_as(
+        "SELECT permissions FROM user_permissions WHERE user_id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::InternalServerError("Database error".to_string()))?;
+
+    if let Some((perms_json,)) = result {
+        if let Ok(perms) = serde_json::from_str::<std::collections::HashMap<String, bool>>(&perms_json) {
+            if perms.get(permission_key).copied().unwrap_or(false) {
+                return Ok(());
+            }
+        }
+    }
+
+    Err(ApiError::Forbidden("Insufficient permissions".to_string()))
 }
 
 // ======== ACTION ENUMS ========
@@ -886,4 +1072,231 @@ pub enum RoomAction {
     Edit,
     Delete,
     View,
+}
+
+// ======== USER PERMISSIONS HANDLERS ========
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UserPermissionsResponse {
+    pub user_id: String,
+    pub permissions: std::collections::HashMap<String, bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePermissionsRequest {
+    pub permissions: std::collections::HashMap<String, bool>,
+}
+
+/// Get user permissions
+pub async fn get_user_permissions(
+    app_state: web::Data<Arc<AppState>>,
+    path: web::Path<String>,
+    http_request: HttpRequest,
+) -> ApiResult<HttpResponse> {
+    let user_id = path.into_inner();
+    let claims = get_current_user(&http_request)?;
+    check_permission(&claims, |role| role.can_manage_users())?;
+
+    // Try to get custom permissions from database
+    let result: Option<(String,)> = sqlx::query_as(
+        "SELECT permissions FROM user_permissions WHERE user_id = ?"
+    )
+    .bind(&user_id)
+    .fetch_optional(&app_state.db_pool)
+    .await?;
+
+    let permissions: std::collections::HashMap<String, bool> = if let Some((perms_json,)) = result {
+        serde_json::from_str(&perms_json).unwrap_or_default()
+    } else {
+        // Return default permissions based on user role
+        let user = User::find_by_id(&app_state.db_pool, &user_id).await?;
+        get_default_permissions_for_role(&user.role)
+    };
+
+    Ok(HttpResponse::Ok().json(ApiResponse::success(UserPermissionsResponse {
+        user_id,
+        permissions,
+    })))
+}
+
+/// Update user permissions
+pub async fn update_user_permissions(
+    app_state: web::Data<Arc<AppState>>,
+    path: web::Path<String>,
+    request: web::Json<UpdatePermissionsRequest>,
+    http_request: HttpRequest,
+) -> ApiResult<HttpResponse> {
+    let user_id = path.into_inner();
+    let claims = get_current_user(&http_request)?;
+    check_permission(&claims, |role| role.can_manage_users())?;
+
+    // Verify user exists
+    let _ = User::find_by_id(&app_state.db_pool, &user_id).await?;
+
+    let permissions_json = serde_json::to_string(&request.permissions)
+        .map_err(|_| ApiError::InternalServerError("Failed to serialize permissions".to_string()))?;
+
+    // Upsert permissions
+    sqlx::query(
+        r#"
+        INSERT INTO user_permissions (user_id, permissions, created_at, updated_at)
+        VALUES (?, ?, datetime('now'), datetime('now'))
+        ON CONFLICT(user_id) DO UPDATE SET
+            permissions = excluded.permissions,
+            updated_at = datetime('now')
+        "#
+    )
+    .bind(&user_id)
+    .bind(&permissions_json)
+    .execute(&app_state.db_pool)
+    .await?;
+
+    log::info!("Admin {} updated permissions for user {}", claims.username, user_id);
+
+    Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
+        (),
+        "Permissions updated successfully".to_string(),
+    )))
+}
+
+/// Get default permissions based on role
+fn get_default_permissions_for_role(role: &str) -> std::collections::HashMap<String, bool> {
+    let mut perms = std::collections::HashMap::new();
+    
+    match role.to_lowercase().as_str() {
+        "admin" => {
+            for perm in &[
+                "create_reagent", "edit_reagent", "delete_reagent", "view_reagent",
+                "create_batch", "edit_batch", "delete_batch", "view_batch", "use_batch",
+                "create_equipment", "edit_equipment", "delete_equipment", "view_equipment", "manage_maintenance",
+                "create_experiment", "edit_experiment", "delete_experiment", "view_experiment",
+                "create_room", "edit_room", "delete_room", "view_room",
+                "view_reports", "export_reports", "import_data", "export_data",
+                "view_audit_log", "manage_users", "manage_system",
+            ] {
+                perms.insert(perm.to_string(), true);
+            }
+        }
+        "researcher" => {
+            for perm in &[
+                "create_reagent", "edit_reagent", "view_reagent",
+                "create_batch", "edit_batch", "view_batch", "use_batch",
+                "create_equipment", "edit_equipment", "view_equipment", "manage_maintenance",
+                "create_experiment", "edit_experiment", "view_experiment",
+                "create_room", "edit_room", "view_room",
+                "view_reports", "export_reports", "export_data",
+            ] {
+                perms.insert(perm.to_string(), true);
+            }
+        }
+        _ => {
+            // viewer and others
+            for perm in &[
+                "view_reagent", "view_batch", "use_batch",
+                "view_equipment", "view_experiment", "view_room",
+                "view_reports",
+            ] {
+                perms.insert(perm.to_string(), true);
+            }
+        }
+    }
+    
+    perms
+}
+
+// ======== USER ACTIVITY HISTORY ========
+
+#[derive(Debug, Serialize)]
+pub struct ActivityRecord {
+    pub id: String,
+    pub user_id: Option<String>,
+    pub action: String,
+    pub entity_type: String,
+    pub entity_id: Option<String>,
+    pub description: Option<String>,
+    pub changes: Option<String>,
+    pub ip_address: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ActivityQuery {
+    pub limit: Option<i32>,
+    pub offset: Option<i32>,
+    pub action_type: Option<String>,
+    pub date_from: Option<String>,
+    pub date_to: Option<String>,
+}
+
+/// Get user activity history
+pub async fn get_user_activity(
+    app_state: web::Data<Arc<AppState>>,
+    path: web::Path<String>,
+    query: web::Query<ActivityQuery>,
+    http_request: HttpRequest,
+) -> ApiResult<HttpResponse> {
+    let user_id = path.into_inner();
+    let claims = get_current_user(&http_request)?;
+    check_permission(&claims, |role| role.can_manage_users())?;
+
+    let limit = query.limit.unwrap_or(100).min(500);
+    let offset = query.offset.unwrap_or(0);
+
+    // Build query with filters
+    let mut sql = String::from(
+        r#"
+        SELECT id, user_id, action, entity_type, entity_id, 
+               description, changes, ip_address, created_at
+        FROM audit_logs
+        WHERE user_id = ?
+        "#
+    );
+
+    let mut conditions = Vec::new();
+    
+    if let Some(ref action_type) = query.action_type {
+        if action_type != "all" {
+            conditions.push(format!("LOWER(action) LIKE '%{}%'", action_type.to_lowercase().replace('\'', "''")));
+        }
+    }
+    
+    if let Some(ref date_from) = query.date_from {
+        conditions.push(format!("created_at >= '{}'", date_from.replace('\'', "''")));
+    }
+    
+    if let Some(ref date_to) = query.date_to {
+        conditions.push(format!("created_at <= '{}T23:59:59'", date_to.replace('\'', "''")));
+    }
+
+    for cond in conditions {
+        sql.push_str(&format!(" AND {}", cond));
+    }
+
+    sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+
+    let rows: Vec<(String, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, String)> = 
+        sqlx::query_as(&sql)
+            .bind(&user_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&app_state.db_pool)
+            .await?;
+
+    let activities: Vec<ActivityRecord> = rows.into_iter()
+        .map(|(id, user_id, action, entity_type, entity_id, description, changes, ip_address, created_at)| {
+            ActivityRecord {
+                id,
+                user_id,
+                action,
+                entity_type,
+                entity_id,
+                description,
+                changes,
+                ip_address,
+                created_at,
+            }
+        })
+        .collect();
+
+    Ok(HttpResponse::Ok().json(ApiResponse::success(activities)))
 }
