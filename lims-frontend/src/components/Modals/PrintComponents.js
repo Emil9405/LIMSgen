@@ -22,7 +22,7 @@ const PrinterIcon = ({ size = 24, color = "currentColor" }) => (
  */
 export const ReagentLabel = ({ reagent, batch }) => {
   const ghsCodes = reagent.hazard_pictograms 
-    ? reagent.hazard_pictograms.split(',').filter(Boolean) 
+    ? reagent.hazard_pictograms.replace(/\s+/g, '').split(',').filter(Boolean) 
     : [];
   const dateStr = batch?.received_date 
     ? new Date(batch.received_date).toLocaleDateString('ru-RU')
@@ -33,7 +33,11 @@ export const ReagentLabel = ({ reagent, batch }) => {
   return (
     <div className="printable-sticker" style={labelStyles.container}>
       <div style={labelStyles.header}>
-        <h1 style={labelStyles.title}>{reagent.name}</h1>
+        <h1 style={labelStyles.title}>
+          <p style={{ margin: 0, fontSize: '22px', color: '#000000' }}>
+          {reagent.name}
+          </p>
+          </h1>
         <div style={labelStyles.subHeader}>
           CAS: {reagent.cas_number || '—'} | MW: {reagent.molecular_weight || '—'} g/mol
         </div>
@@ -105,7 +109,7 @@ export const ReagentLabel = ({ reagent, batch }) => {
  * Generate printable HTML for labels
  */
 const generateLabelHTML = (reagent, batch) => {
-  const ghsCodes = reagent.hazard_pictograms 
+  const ghsCodes =  reagent.hazard_pictograms 
     ? reagent.hazard_pictograms.split(',').filter(Boolean) 
     : [];
   const hasHazards = ghsCodes.length > 0;
@@ -121,7 +125,7 @@ const generateLabelHTML = (reagent, batch) => {
       justify-content: space-between; overflow: hidden; box-sizing: border-box;
     ">
       <div style="border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 6px;">
-        <h1 style="font-size: 26px; font-weight: 900; margin: 0; line-height: 1;
+        <h1 style="font-size: 1px; font-weight: 900; margin: 0; line-height: 1;
           text-transform: uppercase; color: #000; white-space: nowrap;
           overflow: hidden; text-overflow: ellipsis;">
           ${reagent.name}

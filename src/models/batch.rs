@@ -14,6 +14,7 @@ pub struct Batch {
     pub original_quantity: f64,
     pub reserved_quantity: f64,
     pub unit: String,
+    pub pack_size: Option<f64>,
     pub expiry_date: Option<DateTime<Utc>>,
     pub supplier: Option<String>,
     pub manufacturer: Option<String>,
@@ -25,6 +26,7 @@ pub struct Batch {
     pub updated_by: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
@@ -39,6 +41,7 @@ pub struct BatchWithReagentInfo {
     pub original_quantity: f64,
     pub reserved_quantity: f64,
     pub unit: String,
+    pub pack_size: Option<f64>,
     pub expiry_date: Option<DateTime<Utc>>,
     pub supplier: Option<String>,
     pub manufacturer: Option<String>,
@@ -60,6 +63,8 @@ pub struct CreateBatchRequest {
     pub quantity: f64,
     #[validate(length(min = 1, max = 20, message = "Unit must be between 1 and 20 characters"))]
     pub unit: String,
+    #[validate(range(min = 0.001, message = "Pack size must be positive"))]
+    pub pack_size: Option<f64>,
     pub expiry_date: Option<DateTime<Utc>>,
     #[validate(length(max = 255, message = "Supplier cannot exceed 255 characters"))]
     pub supplier: Option<String>,
@@ -84,6 +89,8 @@ pub struct UpdateBatchRequest {
     pub quantity: Option<f64>,
     #[validate(length(min = 1, max = 20, message = "Unit must be between 1 and 20 characters"))]
     pub unit: Option<String>,
+    #[validate(range(min = 0.001, message = "Pack size must be positive"))]
+    pub pack_size: Option<f64>,
     pub expiry_date: Option<DateTime<Utc>>,
     #[validate(length(max = 255, message = "Supplier name cannot exceed 255 characters"))]
     pub supplier: Option<String>,

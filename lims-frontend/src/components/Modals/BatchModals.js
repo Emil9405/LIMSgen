@@ -18,6 +18,7 @@ const BatchFormModal = ({ isOpen, onClose, title, reagentId, batch = null, onSav
     batch_number: '', 
     quantity: '', 
     unit: 'g', 
+    pack_size: '',
     supplier: '', 
     manufacturer: '',
     received_date: '', 
@@ -34,6 +35,7 @@ const BatchFormModal = ({ isOpen, onClose, title, reagentId, batch = null, onSav
         batch_number: batch.batch_number || '',
         quantity: batch.quantity != null ? parseFloat(batch.quantity) : '',
         unit: batch.unit || '',
+        pack_size: batch.pack_size != null ? parseFloat(batch.pack_size) : '',
         supplier: batch.supplier || '',
         manufacturer: batch.manufacturer || '',
         received_date: batch.received_date?.split('T')[0] || '',
@@ -48,7 +50,8 @@ const BatchFormModal = ({ isOpen, onClose, title, reagentId, batch = null, onSav
     setLoading(true);
     const payload = cleanPayload({ 
       ...formData, 
-      quantity: parseFloat(formData.quantity) 
+      quantity: parseFloat(formData.quantity),
+      pack_size: formData.pack_size ? parseFloat(formData.pack_size) : null
     });
     // Format dates with timezone
     if (payload.received_date) payload.received_date = `${payload.received_date}T00:00:00Z`;
@@ -127,14 +130,25 @@ const BatchFormModal = ({ isOpen, onClose, title, reagentId, batch = null, onSav
             </FormGroup>
           </div>
           <div style={styles.twoColGrid}>
+            <FormGroup label="Pack Size" hint="Amount per pack for counting">
+              <Input 
+                type="number" 
+                step="1" 
+                min="0"
+                name="pack_size" 
+                value={formData.pack_size} 
+                onChange={handleChange}
+                placeholder="e.g. 100 (for 100g packs)"
+              />
+            </FormGroup>
             <FormGroup label="Supplier">
               <Input name="supplier" value={formData.supplier} onChange={handleChange} />
             </FormGroup>
+          </div>
+          <div style={styles.twoColGrid}>
             <FormGroup label="Manufacturer">
               <Input name="manufacturer" value={formData.manufacturer} onChange={handleChange} />
             </FormGroup>
-          </div>
-          <div style={styles.twoColGrid}>
             <FormGroup label="Received Date">
               <Input 
                 type="date" 
@@ -143,6 +157,8 @@ const BatchFormModal = ({ isOpen, onClose, title, reagentId, batch = null, onSav
                 onChange={handleChange} 
               />
             </FormGroup>
+          </div>
+          <div style={styles.twoColGrid}>
             <FormGroup label="Expiry Date">
               <Input 
                 type="date" 
@@ -151,10 +167,10 @@ const BatchFormModal = ({ isOpen, onClose, title, reagentId, batch = null, onSav
                 onChange={handleChange} 
               />
             </FormGroup>
+            <FormGroup label="Storage Location">
+              <Input name="location" value={formData.location} onChange={handleChange} />
+            </FormGroup>
           </div>
-          <FormGroup label="Storage Location">
-            <Input name="location" value={formData.location} onChange={handleChange} />
-          </FormGroup>
           <FormGroup label="Notes">
             <TextArea name="notes" value={formData.notes} onChange={handleChange} rows={2} />
           </FormGroup>

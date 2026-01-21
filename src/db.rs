@@ -124,6 +124,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
             original_quantity REAL NOT NULL CHECK(original_quantity >= 0),
             reserved_quantity REAL NOT NULL DEFAULT 0.0 CHECK(reserved_quantity >= 0),
             unit TEXT NOT NULL CHECK(length(unit) > 0 AND length(unit) <= 20),
+            pack_size REAL CHECK(pack_size IS NULL OR pack_size > 0),
             expiry_date DATETIME,
             supplier TEXT CHECK(supplier IS NULL OR length(supplier) <= 255),
             manufacturer TEXT CHECK(manufacturer IS NULL OR length(manufacturer) <= 255),
@@ -137,6 +138,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
             updated_by TEXT,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NOT NULL,
+            deleted_at DATETIME,
             FOREIGN KEY (reagent_id) REFERENCES reagents (id) ON DELETE CASCADE,
             FOREIGN KEY (created_by) REFERENCES users (id),
             FOREIGN KEY (updated_by) REFERENCES users (id),
@@ -443,11 +445,11 @@ async fn create_batch_triggers(pool: &SqlitePool) -> Result<()> {
         let _ = sqlx::query(query).execute(pool).await;
     }
 
-    // INSERT trigger - when adding a batch with status='available'
+    // INSERT trigger - when adding a batch with status='available' and not deleted
     sqlx::query(r#"
         CREATE TRIGGER IF NOT EXISTS trg_batches_insert
         AFTER INSERT ON batches
-        WHEN NEW.status = 'available'
+        WHEN NEW.status = 'available' AND NEW.deleted_at IS NULL
         BEGIN
             UPDATE reagents SET
                 total_quantity = total_quantity + NEW.quantity,
@@ -460,11 +462,11 @@ async fn create_batch_triggers(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    // DELETE trigger - when deleting a batch with status='available'
+    // DELETE trigger - when hard deleting a batch with status='available' (not soft-deleted)
     sqlx::query(r#"
         CREATE TRIGGER IF NOT EXISTS trg_batches_delete
         AFTER DELETE ON batches
-        WHEN OLD.status = 'available'
+        WHEN OLD.status = 'available' AND OLD.deleted_at IS NULL
         BEGIN
             UPDATE reagents SET
                 total_quantity = MAX(0, total_quantity - OLD.quantity),
@@ -476,7 +478,7 @@ async fn create_batch_triggers(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    // UPDATE trigger - full recalculation on change
+    // UPDATE trigger - full recalculation on change (including soft delete)
     sqlx::query(r#"
         CREATE TRIGGER IF NOT EXISTS trg_batches_update
         AFTER UPDATE ON batches
@@ -485,17 +487,17 @@ async fn create_batch_triggers(pool: &SqlitePool) -> Result<()> {
                 total_quantity = (
                     SELECT COALESCE(SUM(quantity), 0)
                     FROM batches
-                    WHERE reagent_id = NEW.reagent_id AND status = 'available'
+                    WHERE reagent_id = NEW.reagent_id AND status = 'available' AND deleted_at IS NULL
                 ),
                 batches_count = (
                     SELECT COUNT(*)
                     FROM batches
-                    WHERE reagent_id = NEW.reagent_id AND status = 'available'
+                    WHERE reagent_id = NEW.reagent_id AND status = 'available' AND deleted_at IS NULL
                 ),
                 primary_unit = (
                     SELECT unit
                     FROM batches
-                    WHERE reagent_id = NEW.reagent_id AND status = 'available'
+                    WHERE reagent_id = NEW.reagent_id AND status = 'available' AND deleted_at IS NULL
                     LIMIT 1
                 ),
                 updated_at = datetime('now')
@@ -506,17 +508,17 @@ async fn create_batch_triggers(pool: &SqlitePool) -> Result<()> {
                 total_quantity = (
                     SELECT COALESCE(SUM(quantity), 0)
                     FROM batches
-                    WHERE reagent_id = OLD.reagent_id AND status = 'available'
+                    WHERE reagent_id = OLD.reagent_id AND status = 'available' AND deleted_at IS NULL
                 ),
                 batches_count = (
                     SELECT COUNT(*)
                     FROM batches
-                    WHERE reagent_id = OLD.reagent_id AND status = 'available'
+                    WHERE reagent_id = OLD.reagent_id AND status = 'available' AND deleted_at IS NULL
                 ),
                 primary_unit = (
                     SELECT unit
                     FROM batches
-                    WHERE reagent_id = OLD.reagent_id AND status = 'available'
+                    WHERE reagent_id = OLD.reagent_id AND status = 'available' AND deleted_at IS NULL
                     LIMIT 1
                 ),
                 updated_at = datetime('now')
@@ -604,26 +606,26 @@ async fn create_fts_tables(pool: &SqlitePool) -> Result<()> {
 async fn initialize_reagent_cache(pool: &SqlitePool) -> Result<()> {
     info!("Initializing reagent cache fields...");
 
-    // Recalculate total_quantity and batches_count from batches
+    // Recalculate total_quantity and batches_count from batches (excluding soft-deleted)
     let result = sqlx::query(r#"
         UPDATE reagents SET
             total_quantity = (
                 SELECT COALESCE(SUM(quantity), 0)
                 FROM batches
-                WHERE reagent_id = reagents.id AND status = 'available'
+                WHERE reagent_id = reagents.id AND status = 'available' AND deleted_at IS NULL
             ),
             batches_count = (
                 SELECT COUNT(*)
                 FROM batches
-                WHERE reagent_id = reagents.id AND status = 'available'
+                WHERE reagent_id = reagents.id AND status = 'available' AND deleted_at IS NULL
             ),
             primary_unit = (
                 SELECT unit
                 FROM batches
-                WHERE reagent_id = reagents.id AND status = 'available'
+                WHERE reagent_id = reagents.id AND status = 'available' AND deleted_at IS NULL
                 LIMIT 1
             )
-        WHERE EXISTS (SELECT 1 FROM batches WHERE reagent_id = reagents.id)
+        WHERE EXISTS (SELECT 1 FROM batches WHERE reagent_id = reagents.id AND deleted_at IS NULL)
            OR total_quantity != 0
            OR batches_count != 0
     "#)
@@ -670,6 +672,8 @@ async fn run_additional_migrations(pool: &SqlitePool) -> Result<()> {
         "ALTER TABLE batches ADD COLUMN created_by TEXT",
         "ALTER TABLE batches ADD COLUMN updated_by TEXT",
         "ALTER TABLE batches ADD COLUMN reserved_quantity REAL NOT NULL DEFAULT 0.0 CHECK(reserved_quantity >= 0)",
+        "ALTER TABLE batches ADD COLUMN pack_size REAL CHECK(pack_size IS NULL OR pack_size > 0)",
+        "ALTER TABLE batches ADD COLUMN deleted_at DATETIME",
 
         // ==================== EXPERIMENTS ====================
         "ALTER TABLE experiment_reagents ADD COLUMN is_consumed INTEGER NOT NULL DEFAULT 0 CHECK(is_consumed IN (0, 1))",
@@ -775,17 +779,17 @@ pub async fn rebuild_reagent_cache(pool: &SqlitePool) -> Result<u64> {
             total_quantity = (
                 SELECT COALESCE(SUM(quantity), 0)
                 FROM batches
-                WHERE reagent_id = reagents.id AND status = 'available'
+                WHERE reagent_id = reagents.id AND status = 'available' AND deleted_at IS NULL
             ),
             batches_count = (
                 SELECT COUNT(*)
                 FROM batches
-                WHERE reagent_id = reagents.id AND status = 'available'
+                WHERE reagent_id = reagents.id AND status = 'available' AND deleted_at IS NULL
             ),
             primary_unit = (
                 SELECT unit
                 FROM batches
-                WHERE reagent_id = reagents.id AND status = 'available'
+                WHERE reagent_id = reagents.id AND status = 'available' AND deleted_at IS NULL
                 LIMIT 1
             ),
             updated_at = datetime('now')

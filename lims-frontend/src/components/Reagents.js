@@ -145,7 +145,7 @@ const accordionStyles = {
   },
   batchCard: {
     display: 'grid',
-    gridTemplateColumns: '120px 120px 100px 120px 140px 200px auto',
+    gridTemplateColumns: '120px 120px 80px 100px 120px 140px 180px auto',
     gap: '12px',
     padding: '14px',
     backgroundColor: '#fff',
@@ -316,7 +316,7 @@ const ReagentAccordionItem = ({
               color: reagent.total_display === 'No stock' ? '#e53e3e' : '#38a169',
               fontWeight: '600'
             }}>
-              {reagent.total_display || `${reagent.total_quantity} ${reagent.unit || ''}`}
+              {reagent.total_display || `${reagent.total_quantity} ${reagent.primary_unit || ''}`}
             </div>
           </div>
 
@@ -371,7 +371,7 @@ const ReagentAccordionItem = ({
                       background: 'linear-gradient(135deg, rgba(49, 130, 206, 0.08) 0%, rgba(56, 161, 105, 0.08) 100%)',
                       fontWeight: '700', fontSize: '0.7rem', color: '#1a365d', textTransform: 'uppercase', letterSpacing: '0.05em', border: 'none'
                     }}>
-                      <div>Batch #</div><div>Qty</div><div>Reserved</div><div>Status</div><div>Expiry</div><div>Location</div><div>Actions</div>
+                      <div>Batch #</div><div>Qty</div><div>Packs</div><div>Reserved</div><div>Status</div><div>Expiry</div><div>Location</div><div>Actions</div>
                     </div>
 
                     {batches.map(batch => {
@@ -380,6 +380,9 @@ const ReagentAccordionItem = ({
                           <div key={batch.id} style={accordionStyles.batchCard}>
                             <div style={accordionStyles.batchValue}>{batch.batch_number}</div>
                             <div style={accordionStyles.batchValue}>{batch.quantity} {batch.unit}</div>
+                            <div style={{ ...accordionStyles.batchValue, color: batch.pack_count ? '#3182ce' : '#a0aec0' }}>
+                              {batch.pack_count ? `${batch.pack_count} pcs` : '—'}
+                            </div>
                             <div style={{ ...accordionStyles.batchValue, color: (batch.reserved_quantity||0) > 0 ? '#dd6b20' : '#a0aec0' }}>
                               {(batch.reserved_quantity||0) > 0 ? `${batch.reserved_quantity} ${batch.unit}` : '—'}
                             </div>

@@ -29,6 +29,8 @@ pub struct BatchResponse {
     pub original_quantity: f64,
     pub reserved_quantity: f64,
     pub unit: String,
+    pub pack_size: Option<f64>,
+    pub pack_count: Option<i64>,
     pub expiry_date: Option<DateTime<Utc>>,
     pub supplier: Option<String>,
     pub manufacturer: Option<String>,
@@ -62,6 +64,7 @@ pub struct BatchWithReagent {
     pub original_quantity: f64,
     pub reserved_quantity: f64,
     pub unit: String,
+    pub pack_size: Option<f64>,
     pub expiry_date: Option<DateTime<Utc>>,
     pub supplier: Option<String>,
     pub manufacturer: Option<String>,
@@ -73,6 +76,7 @@ pub struct BatchWithReagent {
     pub updated_by: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
     pub reagent_name: String,
 }
 
@@ -89,6 +93,8 @@ pub struct BatchWithReagentResponse {
     pub original_quantity: f64,
     pub reserved_quantity: f64,
     pub unit: String,
+    pub pack_size: Option<f64>,
+    pub pack_count: Option<i64>,
     pub expiry_date: Option<DateTime<Utc>>,
     pub supplier: Option<String>,
     pub manufacturer: Option<String>,
@@ -100,6 +106,13 @@ pub struct BatchWithReagentResponse {
     pub updated_at: DateTime<Utc>,
     pub expiration_status: String,
     pub days_until_expiration: Option<i64>,
+}
+
+// ==================== PACK COUNT CALCULATION ====================
+
+/// Вычисляет количество упаковок: ceil(quantity / pack_size)
+fn calculate_pack_count(quantity: f64, pack_size: Option<f64>) -> Option<i64> {
+    pack_size.map(|ps| (quantity / ps).ceil() as i64)
 }
 
 // ==================== EXPIRATION STATUS ====================
@@ -189,6 +202,9 @@ pub async fn get_all_batches(
         .map_err(|e| ApiError::bad_request(&e))?
         .with_whitelist(&whitelist);
 
+    // Исключаем удалённые батчи
+    builder.add_condition("b.deleted_at IS NULL", vec![]);
+
     // Добавляем условия поиска
     if let Some(ref search) = query.search {
         let trimmed = search.trim();
@@ -238,6 +254,7 @@ pub async fn get_all_batches(
         .into_iter()
         .map(|b| {
             let (expiration_status, days_until_expiration) = calculate_expiration_status(b.expiry_date);
+            let pack_count = calculate_pack_count(b.quantity, b.pack_size);
             BatchWithReagentResponse {
                 id: b.id,
                 reagent_id: b.reagent_id,
@@ -249,6 +266,8 @@ pub async fn get_all_batches(
                 original_quantity: b.original_quantity,
                 reserved_quantity: b.reserved_quantity,
                 unit: b.unit,
+                pack_size: b.pack_size,
+                pack_count,
                 expiry_date: b.expiry_date,
                 supplier: b.supplier,
                 manufacturer: b.manufacturer,
@@ -289,7 +308,8 @@ pub async fn get_batch(
 
     builder
         .add_exact_match("id", &batch_id)
-        .add_exact_match("reagent_id", &reagent_id);
+        .add_exact_match("reagent_id", &reagent_id)
+        .add_condition("deleted_at IS NULL", vec![]);
 
     let (sql, params) = builder.build();
     
@@ -304,6 +324,7 @@ pub async fn get_batch(
         .ok_or_else(|| ApiError::not_found("Batch"))?;
 
     let (expiration_status, days_until_expiration) = calculate_expiration_status(batch.expiry_date);
+    let pack_count = calculate_pack_count(batch.quantity, batch.pack_size);
     
     let response = BatchResponse {
         id: batch.id,
@@ -315,6 +336,8 @@ pub async fn get_batch(
         original_quantity: batch.original_quantity,
         reserved_quantity: batch.reserved_quantity,
         unit: batch.unit,
+        pack_size: batch.pack_size,
+        pack_count,
         expiry_date: batch.expiry_date,
         supplier: batch.supplier,
         manufacturer: batch.manufacturer,
@@ -367,11 +390,11 @@ pub async fn create_batch(
     sqlx::query(
         r#"INSERT INTO batches (
             id, reagent_id, lot_number, batch_number, cat_number,
-            quantity, original_quantity, reserved_quantity, unit,
+            quantity, original_quantity, reserved_quantity, unit, pack_size,
             expiry_date, supplier, manufacturer, received_date,
             status, location, notes, created_by, updated_by,
             created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, ?, ?, ?, 'available', ?, ?, ?, ?, ?, ?)"#,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&batch_id)
     .bind(&reagent_id)
@@ -381,6 +404,7 @@ pub async fn create_batch(
     .bind(batch_data.quantity)
     .bind(batch_data.quantity)  // original_quantity
     .bind(&batch_data.unit)
+    .bind(&batch_data.pack_size)
     .bind(&batch_data.expiry_date)
     .bind(&batch_data.supplier)
     .bind(&batch_data.manufacturer)
@@ -400,6 +424,7 @@ pub async fn create_batch(
         .await?;
 
     let (expiration_status, days_until_expiration) = calculate_expiration_status(batch.expiry_date);
+    let pack_count = calculate_pack_count(batch.quantity, batch.pack_size);
 
     let response = BatchResponse {
         id: batch.id,
@@ -411,6 +436,8 @@ pub async fn create_batch(
         original_quantity: batch.original_quantity,
         reserved_quantity: batch.reserved_quantity,
         unit: batch.unit,
+        pack_size: batch.pack_size,
+        pack_count,
         expiry_date: batch.expiry_date,
         supplier: batch.supplier,
         manufacturer: batch.manufacturer,
@@ -460,6 +487,7 @@ pub async fn update_batch(
             cat_number = COALESCE(?, cat_number),
             quantity = COALESCE(?, quantity),
             unit = COALESCE(?, unit),
+            pack_size = COALESCE(?, pack_size),
             expiry_date = COALESCE(?, expiry_date),
             supplier = COALESCE(?, supplier),
             manufacturer = COALESCE(?, manufacturer),
@@ -475,6 +503,7 @@ pub async fn update_batch(
     .bind(&batch_data.cat_number)
     .bind(&batch_data.quantity)
     .bind(&batch_data.unit)
+    .bind(&batch_data.pack_size)
     .bind(&batch_data.expiry_date)
     .bind(&batch_data.supplier)
     .bind(&batch_data.manufacturer)
@@ -494,6 +523,7 @@ pub async fn update_batch(
         .await?;
 
     let (expiration_status, days_until_expiration) = calculate_expiration_status(batch.expiry_date);
+    let pack_count = calculate_pack_count(batch.quantity, batch.pack_size);
 
     let response = BatchResponse {
         id: batch.id,
@@ -505,6 +535,8 @@ pub async fn update_batch(
         original_quantity: batch.original_quantity,
         reserved_quantity: batch.reserved_quantity,
         unit: batch.unit,
+        pack_size: batch.pack_size,
+        pack_count,
         expiry_date: batch.expiry_date,
         supplier: batch.supplier,
         manufacturer: batch.manufacturer,
@@ -526,7 +558,7 @@ pub async fn update_batch(
     Ok(HttpResponse::Ok().json(ApiResponse::success(response)))
 }
 
-/// Удалить партию
+/// Удалить партию (soft delete)
 pub async fn delete_batch(
     app_state: web::Data<Arc<AppState>>,
     path: web::Path<(String, String)>,
@@ -534,7 +566,17 @@ pub async fn delete_batch(
 ) -> ApiResult<HttpResponse> {
     let (reagent_id, batch_id) = path.into_inner();
 
-    let result = sqlx::query("DELETE FROM batches WHERE id = ? AND reagent_id = ?")
+    // Проверка существования (только не удалённые)
+    let _: Batch = sqlx::query_as("SELECT * FROM batches WHERE id = ? AND reagent_id = ? AND deleted_at IS NULL")
+        .bind(&batch_id)
+        .bind(&reagent_id)
+        .fetch_one(&app_state.db_pool)
+        .await
+        .map_err(|_| ApiError::not_found("Batch"))?;
+
+    // Soft delete - устанавливаем deleted_at
+    let result = sqlx::query("UPDATE batches SET deleted_at = datetime('now'), updated_by = ? WHERE id = ? AND reagent_id = ?")
+        .bind(&user_id)
         .bind(&batch_id)
         .bind(&reagent_id)
         .execute(&app_state.db_pool)
@@ -544,7 +586,7 @@ pub async fn delete_batch(
         return Err(ApiError::not_found("Batch"));
     }
 
-    log::info!("🗑️ Batch {} deleted by user {}", batch_id, user_id);
+    log::info!("🗑️ Batch {} soft-deleted by user {}", batch_id, user_id);
 
     Ok(HttpResponse::Ok().json(ApiResponse::<()>::success_with_message((), "Batch deleted successfully".to_string())))
 }
@@ -570,6 +612,9 @@ pub async fn get_expiring_batches(
         .map_err(|e| ApiError::bad_request(&e))?
         .with_whitelist(&whitelist);
 
+    // Исключаем удалённые батчи
+    builder.add_condition("b.deleted_at IS NULL", vec![]);
+
     builder
         .add_is_not_null("b.expiry_date")
         .add_comparison("b.expiry_date", "<=", expiry_threshold.to_rfc3339())
@@ -588,6 +633,7 @@ pub async fn get_expiring_batches(
         .into_iter()
         .map(|b| {
             let (expiration_status, days_until_expiration) = calculate_expiration_status(b.expiry_date);
+            let pack_count = calculate_pack_count(b.quantity, b.pack_size);
             BatchWithReagentResponse {
                 id: b.id,
                 reagent_id: b.reagent_id,
@@ -599,6 +645,8 @@ pub async fn get_expiring_batches(
                 original_quantity: b.original_quantity,
                 reserved_quantity: b.reserved_quantity,
                 unit: b.unit,
+                pack_size: b.pack_size,
+                pack_count,
                 expiry_date: b.expiry_date,
                 supplier: b.supplier,
                 manufacturer: b.manufacturer,
@@ -637,6 +685,7 @@ pub async fn get_low_stock_batches(
         FROM batches b
         JOIN reagents r ON b.reagent_id = r.id
         WHERE b.status = 'available'
+          AND b.deleted_at IS NULL
           AND b.original_quantity > 0
           AND (b.quantity / b.original_quantity * 100) <= ?
         ORDER BY (b.quantity / b.original_quantity) ASC
@@ -649,6 +698,7 @@ pub async fn get_low_stock_batches(
         .into_iter()
         .map(|b| {
             let (expiration_status, days_until_expiration) = calculate_expiration_status(b.expiry_date);
+            let pack_count = calculate_pack_count(b.quantity, b.pack_size);
             BatchWithReagentResponse {
                 id: b.id,
                 reagent_id: b.reagent_id,
@@ -660,6 +710,8 @@ pub async fn get_low_stock_batches(
                 original_quantity: b.original_quantity,
                 reserved_quantity: b.reserved_quantity,
                 unit: b.unit,
+                pack_size: b.pack_size,
+                pack_count,
                 expiry_date: b.expiry_date,
                 supplier: b.supplier,
                 manufacturer: b.manufacturer,
@@ -736,6 +788,9 @@ pub async fn get_batches_for_reagent(
         .map_err(|e| ApiError::bad_request(&e))?
         .with_whitelist(&whitelist);
 
+    // Исключаем удалённые батчи
+    builder.add_condition("deleted_at IS NULL", vec![]);
+
     builder.add_exact_match("reagent_id", &reagent_id);
 
     if let Some(ref status) = query.status {
@@ -768,6 +823,7 @@ pub async fn get_batches_for_reagent(
         .into_iter()
         .map(|b| {
             let (expiration_status, days_until_expiration) = calculate_expiration_status(b.expiry_date);
+            let pack_count = calculate_pack_count(b.quantity, b.pack_size);
             BatchResponse {
                 id: b.id,
                 reagent_id: b.reagent_id,
@@ -778,6 +834,8 @@ pub async fn get_batches_for_reagent(
                 original_quantity: b.original_quantity,
                 reserved_quantity: b.reserved_quantity,
                 unit: b.unit,
+                pack_size: b.pack_size,
+                pack_count,
                 expiry_date: b.expiry_date,
                 supplier: b.supplier,
                 manufacturer: b.manufacturer,

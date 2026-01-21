@@ -37,7 +37,7 @@ export const CreateReagentModal = ({ isOpen, onClose, onSave }) => {
     storage_conditions: '', appearance: '', hazard_pictograms: ''
   });
   const [batchData, setBatchData] = useState({
-    batch_number: '', quantity: '', unit: 'g', expiry_date: '', location: '', notes: ''
+    batch_number: '', quantity: '', unit: 'g', pack_size: '', expiry_date: '', location: '', notes: ''
   });
 
   const validate = () => {
@@ -64,7 +64,8 @@ export const CreateReagentModal = ({ isOpen, onClose, onSave }) => {
 
       const batchPayload = cleanPayload({ 
         ...batchData, 
-        quantity: parseFloat(batchData.quantity), 
+        quantity: parseFloat(batchData.quantity),
+        pack_size: batchData.pack_size ? parseFloat(batchData.pack_size) : null,
         manufacturer: reagentData.manufacturer 
       });
       if (batchPayload.expiry_date) batchPayload.expiry_date = `${batchPayload.expiry_date}T00:00:00Z`;
@@ -207,6 +208,17 @@ export const CreateReagentModal = ({ isOpen, onClose, onSave }) => {
                   </Select>
                 </FormGroup>
               </div>
+              <FormGroup label="Pack Size" hint="Amount per pack (for counting packs)">
+                <Input 
+                  type="number" 
+                  step="0.01"
+                  min="0.001"
+                  name="pack_size" 
+                  value={batchData.pack_size} 
+                  onChange={handleBatchChange}
+                  placeholder="e.g. 100 for 100g packs"
+                />
+              </FormGroup>
               <div style={styles.twoColGrid}>
                 <FormGroup label="Expiry Date">
                   <Input 
