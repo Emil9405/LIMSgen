@@ -25,6 +25,7 @@ import { HazardSelect, HazardDisplay } from './HazardComponents';
 import { PrintStickerModal, PrinterIcon } from './PrintComponents';
 import { CreateBatchModal, EditBatchModal } from './BatchModals';
 import { UsageHistoryModal } from './UsageHistoryModal';
+import { BatchUsageInput } from './BatchUsageInput';
 
 // ==================== CreateReagentModal (with first batch) ====================
 
@@ -435,7 +436,7 @@ export const ViewReagentModal = ({ isOpen, onClose, reagent, onEdit }) => {
   };
   
   const handleBatchAction = async (action, item) => {
-    if (action === 'view') { 
+    if (action === 'history') { 
       setSelectedBatch(item); 
       setShowUsageHistory(true); 
     } else if (action === 'edit') { 
@@ -626,12 +627,21 @@ export const ViewReagentModal = ({ isOpen, onClose, reagent, onEdit }) => {
             },
             {
               key: 'actions', 
+              label: 'Usage', 
+              render: i => (
+                <BatchUsageInput
+                  batch={i}
+                  reagentId={reagent.id}
+                  onUsageComplete={loadBatches}
+                  onShowHistory={(batch) => handleBatchAction('history', batch)}
+                />
+              )
+            },
+            {
+              key: 'manage', 
               label: '', 
               render: i => (
                 <div style={{ display: 'flex', gap: '4px' }}>
-                  <Button size="small" variant="secondary" onClick={() => handleBatchAction('view', i)} icon={<FlaskIcon size={12} />}>
-                    Use
-                  </Button>
                   <Button size="small" variant="primary" onClick={() => handleBatchAction('edit', i)} icon={<EditIcon size={12} />} />
                   <Button size="small" variant="danger" onClick={() => handleBatchAction('delete', i)} icon={<TrashIcon size={12} />} />
                 </div>
@@ -670,8 +680,8 @@ export const ViewReagentModal = ({ isOpen, onClose, reagent, onEdit }) => {
             isOpen={showUsageHistory} 
             onClose={() => setShowUsageHistory(false)} 
             reagentId={reagent.id} 
-            batchId={selectedBatch.id} 
-            onSave={loadBatches} 
+            batchId={selectedBatch.id}
+            batch={selectedBatch}
           />
         )}
         

@@ -24,8 +24,9 @@ export { ChangePasswordModal } from './ChangePasswordModal';
 // Equipment Modals
 export { CreateEquipmentModal, EditEquipmentModal } from './EquipmentModals';
 
-// Batch Modals
+// Batch Modals & Inline Usage
 export { CreateBatchModal, EditBatchModal } from './BatchModals';
+export { BatchUsageInput } from './BatchUsageInput';
 
 // Reagent Modals
 export { CreateReagentModal, EditReagentModal, ViewReagentModal } from './ReagentModals';

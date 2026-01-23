@@ -145,7 +145,7 @@ const accordionStyles = {
   },
   batchCard: {
     display: 'grid',
-    gridTemplateColumns: '120px 120px 80px 100px 120px 140px 180px auto',
+    gridTemplateColumns: '110px 90px 90px 80px 90px 100px 110px 1fr',
     gap: '12px',
     padding: '14px',
     backgroundColor: '#fff',
@@ -193,6 +193,12 @@ const ReagentAccordionItem = ({
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [selectedBatch, setSelectedBatch] = useState(null);
 
+  // Инлайн-списание: состояние для каждого батча
+  const [usageInputs, setUsageInputs] = useState({}); // { batchId: { quantity: '' } }
+  const [usageLoading, setUsageLoading] = useState({}); // { batchId: true/false }
+  const [usageSuccess, setUsageSuccess] = useState({}); // { batchId: 'message' }
+  const [usageError, setUsageError] = useState({}); // { batchId: 'error' }
+
   useEffect(() => {
     if (isExpanded && batches.length === 0) {
       loadBatches();
@@ -235,6 +241,100 @@ const ReagentAccordionItem = ({
         alert(err.message || 'Failed to delete batch');
       }
     }
+  };
+
+  // ========== Инлайн-списание ==========
+  
+  const getUsageInput = (batchId) => usageInputs[batchId] || { quantity: '' };
+  
+  const setUsageQuantity = (batchId, value) => {
+    setUsageInputs(prev => ({
+      ...prev,
+      [batchId]: { quantity: value }
+    }));
+    setUsageError(prev => ({ ...prev, [batchId]: '' }));
+  };
+
+  // Обычное списание по количеству
+  const handleQuantityUse = async (batch) => {
+    const input = getUsageInput(batch.id);
+    const qty = parseFloat(input.quantity);
+    
+    if (!qty || qty <= 0) {
+      setUsageError(prev => ({ ...prev, [batch.id]: 'Enter quantity' }));
+      return;
+    }
+    
+    const available = batch.quantity - (batch.reserved_quantity || 0);
+    if (qty > available) {
+      setUsageError(prev => ({ ...prev, [batch.id]: `Max: ${available}` }));
+      return;
+    }
+
+    setUsageLoading(prev => ({ ...prev, [batch.id]: true }));
+    setUsageError(prev => ({ ...prev, [batch.id]: '' }));
+    
+    try {
+      await api.useReagent(reagent.id, batch.id, { quantity_used: qty });
+      setUsageSuccess(prev => ({ ...prev, [batch.id]: `−${qty} ${batch.unit}` }));
+      setUsageQuantity(batch.id, '');
+      loadBatches();
+      if (onReagentsRefresh) onReagentsRefresh();
+      setTimeout(() => setUsageSuccess(prev => ({ ...prev, [batch.id]: '' })), 2500);
+    } catch (err) {
+      setUsageError(prev => ({ ...prev, [batch.id]: err.message || 'Error' }));
+    } finally {
+      setUsageLoading(prev => ({ ...prev, [batch.id]: false }));
+    }
+  };
+
+  // Штучное списание (по pack_size)
+  const handlePackUse = async (batch, packCount = 1) => {
+    if (!batch.pack_size || batch.pack_size <= 0) {
+      setUsageError(prev => ({ ...prev, [batch.id]: 'No pack size' }));
+      return;
+    }
+    
+    const qty = batch.pack_size * packCount;
+    const available = batch.quantity - (batch.reserved_quantity || 0);
+    
+    if (qty > available) {
+      setUsageError(prev => ({ ...prev, [batch.id]: `Max: ${Math.floor(available / batch.pack_size)} pcs` }));
+      return;
+    }
+
+    setUsageLoading(prev => ({ ...prev, [batch.id]: true }));
+    setUsageError(prev => ({ ...prev, [batch.id]: '' }));
+    
+    try {
+      // Используем обычный use endpoint с вычисленным количеством
+      await api.useReagent(reagent.id, batch.id, { quantity_used: qty });
+      setUsageSuccess(prev => ({ ...prev, [batch.id]: `−${packCount} pcs` }));
+      setUsageQuantity(batch.id, '');
+      loadBatches();
+      if (onReagentsRefresh) onReagentsRefresh();
+      setTimeout(() => setUsageSuccess(prev => ({ ...prev, [batch.id]: '' })), 2500);
+    } catch (err) {
+      setUsageError(prev => ({ ...prev, [batch.id]: err.message || 'Error' }));
+    } finally {
+      setUsageLoading(prev => ({ ...prev, [batch.id]: false }));
+    }
+  };
+
+  // Stepper для packs: увеличить/уменьшить на 1 pack_size
+  const adjustQuantityByPack = (batchId, packSize, direction, available) => {
+    const current = parseFloat(getUsageInput(batchId).quantity) || 0;
+    let newValue;
+    
+    if (direction === 'up') {
+      newValue = current + packSize;
+      if (newValue > available) newValue = available;
+    } else {
+      newValue = current - packSize;
+      if (newValue < 0) newValue = 0;
+    }
+    
+    setUsageQuantity(batchId, newValue > 0 ? newValue.toString() : '');
   };
 
   const getExpiryStatus = (expiryDate) => {
@@ -376,24 +476,149 @@ const ReagentAccordionItem = ({
 
                     {batches.map(batch => {
                       const expiryStatus = getExpiryStatus(batch.expiry_date);
+                      const input = getUsageInput(batch.id);
+                      const isLoading = usageLoading[batch.id];
+                      const success = usageSuccess[batch.id];
+                      const error = usageError[batch.id];
+                      const available = batch.quantity - (batch.reserved_quantity || 0);
+                      const hasPackSize = batch.pack_size && batch.pack_size > 0;
+                      const packCount = hasPackSize ? Math.floor(batch.quantity / batch.pack_size) : 0;
+                      const availablePacks = hasPackSize ? Math.floor(available / batch.pack_size) : 0;
+                      const inputQty = parseFloat(input.quantity) || 0;
+                      const inputPacks = hasPackSize && inputQty > 0 ? Math.floor(inputQty / batch.pack_size) : 0;
+                      
                       return (
                           <div key={batch.id} style={accordionStyles.batchCard}>
                             <div style={accordionStyles.batchValue}>{batch.batch_number}</div>
                             <div style={accordionStyles.batchValue}>{batch.quantity} {batch.unit}</div>
-                            <div style={{ ...accordionStyles.batchValue, color: batch.pack_count ? '#3182ce' : '#a0aec0' }}>
-                              {batch.pack_count ? `${batch.pack_count} pcs` : '—'}
+                            
+                            {/* Packs column with vertical stepper */}
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                              {hasPackSize && availablePacks > 0 && batch.status === 'available' ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => adjustQuantityByPack(batch.id, batch.pack_size, 'up', available)}
+                                    disabled={isLoading || inputQty >= available}
+                                    style={{
+                                      width: '32px',
+                                      height: '18px',
+                                      border: '1px solid #cbd5e0',
+                                      borderRadius: '4px',
+                                      background: isLoading || inputQty >= available ? '#f7fafc' : '#edf2f7',
+                                      cursor: isLoading || inputQty >= available ? 'not-allowed' : 'pointer',
+                                      fontSize: '12px',
+                                      color: isLoading || inputQty >= available ? '#a0aec0' : '#4a5568',
+                                      padding: 0,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center'
+                                    }}
+                                  >▲</button>
+                                  <span style={{ 
+                                    color: inputPacks > 0 ? '#3182ce' : '#718096', 
+                                    fontWeight: inputPacks > 0 ? '600' : '500',
+                                    fontSize: '0.85rem',
+                                    whiteSpace: 'nowrap'
+                                  }}>
+                                    {inputPacks > 0 ? `${inputPacks}/` : ''}{packCount} pcs
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => adjustQuantityByPack(batch.id, batch.pack_size, 'down', available)}
+                                    disabled={isLoading || inputQty <= 0}
+                                    style={{
+                                      width: '32px',
+                                      height: '18px',
+                                      border: '1px solid #cbd5e0',
+                                      borderRadius: '4px',
+                                      background: isLoading || inputQty <= 0 ? '#f7fafc' : '#edf2f7',
+                                      cursor: isLoading || inputQty <= 0 ? 'not-allowed' : 'pointer',
+                                      fontSize: '12px',
+                                      color: isLoading || inputQty <= 0 ? '#a0aec0' : '#4a5568',
+                                      padding: 0,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center'
+                                    }}
+                                  >▼</button>
+                                </>
+                              ) : (
+                                <span style={{ color: packCount ? '#3182ce' : '#a0aec0', fontSize: '0.85rem' }}>
+                                  {packCount ? `${packCount} pcs` : '—'}
+                                </span>
+                              )}
                             </div>
+                            
                             <div style={{ ...accordionStyles.batchValue, color: (batch.reserved_quantity||0) > 0 ? '#dd6b20' : '#a0aec0' }}>
                               {(batch.reserved_quantity||0) > 0 ? `${batch.reserved_quantity} ${batch.unit}` : '—'}
                             </div>
                             <div>{getStatusBadge(batch.status)}</div>
                             <div style={expiryStatus.style}>{expiryStatus.text}</div>
                             <div style={accordionStyles.batchValue}>{batch.storage_location || batch.location || '—'}</div>
-                            <div style={{ display: 'flex', gap: '4px' }}>
-                              {batch.status === 'available' && (
-                                <Button size="small" variant="primary" onClick={() => { setSelectedBatch(batch); setShowUsageHistory(true); }} icon={<UseIcon size={14} />} style={{ backgroundColor: '#38a169' }}>Use</Button>
+                            
+                            {/* Actions column */}
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'nowrap' }}>
+                              {/* Quantity input */}
+                              {batch.status === 'available' && available > 0 && (
+                                <>
+                                  <input
+                                    type="number"
+                                    step={hasPackSize ? batch.pack_size : "0.01"}
+                                    min="0.01"
+                                    max={available}
+                                    value={input.quantity}
+                                    onChange={(e) => setUsageQuantity(batch.id, e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        handleQuantityUse(batch);
+                                      }
+                                    }}
+                                    placeholder={available.toString()}
+                                    disabled={isLoading}
+                                    style={{
+                                      width: '70px',
+                                      height: '30px',
+                                      padding: '0 6px',
+                                      border: error ? '1px solid #e53e3e' : '1px solid #e2e8f0',
+                                      borderRadius: '6px',
+                                      fontSize: '13px',
+                                      textAlign: 'right'
+                                    }}
+                                  />
+                                  <span style={{ fontSize: '11px', color: '#718096', minWidth: '20px' }}>
+                                    {batch.unit}
+                                  </span>
+                                  <Button 
+                                    size="small" 
+                                    variant="primary" 
+                                    onClick={() => handleQuantityUse(batch)} 
+                                    disabled={isLoading || !input.quantity}
+                                    icon={<UseIcon size={14} />} 
+                                    style={{ backgroundColor: '#38a169' }}
+                                  >
+                                    {isLoading ? '...' : 'Use'}
+                                  </Button>
+                                </>
                               )}
+                              
+                              {/* Success indicator */}
+                              {success && (
+                                <span style={{ color: '#38a169', fontSize: '11px', fontWeight: '600', whiteSpace: 'nowrap' }}>
+                                  ✓ {success}
+                                </span>
+                              )}
+                              
+                              {/* Error indicator */}
+                              {error && (
+                                <span style={{ color: '#e53e3e', fontSize: '11px' }} title={error}>⚠</span>
+                              )}
+                              
+                              {/* History button */}
                               <Button size="small" variant="ghost" onClick={() => { setSelectedBatch(batch); setShowUsageHistory(true); }} icon={<ClockIcon size={14} />}>History</Button>
+                              
+                              {/* Edit & Delete */}
                               {canEdit && <Button size="small" variant="secondary" onClick={() => { setSelectedBatch(batch); setShowEditBatch(true); }} icon={<EditIcon size={14} />}>Edit</Button>}
                               {canDelete && <Button size="small" variant="danger" onClick={() => handleDeleteBatch(batch)} icon={<TrashIcon size={14} />}>Delete</Button>}
                             </div>
