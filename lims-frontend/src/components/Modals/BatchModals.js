@@ -19,6 +19,7 @@ const BatchFormModal = ({ isOpen, onClose, title, reagentId, batch = null, onSav
     quantity: '', 
     unit: 'g', 
     pack_size: '',
+    cat_number: '',
     supplier: '', 
     manufacturer: '',
     received_date: '', 
@@ -36,6 +37,7 @@ const BatchFormModal = ({ isOpen, onClose, title, reagentId, batch = null, onSav
         quantity: batch.quantity != null ? parseFloat(batch.quantity) : '',
         unit: batch.unit || '',
         pack_size: batch.pack_size != null ? parseFloat(batch.pack_size) : '',
+        cat_number: batch.cat_number || '',
         supplier: batch.supplier || '',
         manufacturer: batch.manufacturer || '',
         received_date: batch.received_date?.split('T')[0] || '',
@@ -149,6 +151,11 @@ const BatchFormModal = ({ isOpen, onClose, title, reagentId, batch = null, onSav
             <FormGroup label="Manufacturer">
               <Input name="manufacturer" value={formData.manufacturer} onChange={handleChange} />
             </FormGroup>
+            <FormGroup label="Catalog Number">
+              <Input name="cat_number" value={formData.cat_number} onChange={handleChange} placeholder="e.g. A1234" />
+            </FormGroup>
+          </div>
+          <div style={styles.twoColGrid}>
             <FormGroup label="Received Date">
               <Input 
                 type="date" 
@@ -157,8 +164,6 @@ const BatchFormModal = ({ isOpen, onClose, title, reagentId, batch = null, onSav
                 onChange={handleChange} 
               />
             </FormGroup>
-          </div>
-          <div style={styles.twoColGrid}>
             <FormGroup label="Expiry Date">
               <Input 
                 type="date" 

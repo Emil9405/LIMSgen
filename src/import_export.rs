@@ -146,17 +146,17 @@ pub struct ReagentImportDto {
     #[serde(alias = "Lot number", alias = "Lot Number", alias = "batch_number", alias = "Партия")]
     pub batch_number: Option<String>,
     
-    #[serde(alias = "Quantiy in pcs", alias = "Quantity in pcs")]
-    pub quantity_pcs: Option<String>,
+    #[serde(alias = "Pack_size", alias = "Pack size", alias = "Pack Size", alias = "PackSize", alias = "pack_size", alias = "Unit Size", alias = "UnitSize")]
+    pub pack_size: Option<f64>,
     
     #[serde(alias = "Quantity", alias = "quantity", alias = "Количество")]
     pub quantity: Option<f64>,
     
-    #[serde(alias = "Units", alias = "units", alias = "Unit", alias = "unit", alias = "Единицы")]
+    #[serde(alias = "Units", alias = "units", alias = "Unit", alias = "unit", alias = "Единицы",)]
     pub units: Option<String>,
     
     #[serde(alias = "Expiry Date", alias = "expiry_date", alias = "expiration_date", alias = "Срок годности")]
-    #[serde(default, deserialize_with = "deserialize_flexible_date")] // <--- ПРИМЕНЕНО ЗДЕСЬ
+    #[serde(default, deserialize_with = "deserialize_flexible_date")] 
     pub expiry_date: Option<String>,
     
     #[serde(alias = "Place", alias = "Location", alias = "location", alias = "Место хранения")]
@@ -170,13 +170,17 @@ pub struct ReagentImportDto {
 pub struct BatchImportDto {
     #[serde(alias = "Reagent Name", alias = "reagent_name")]
     pub reagent_name: String,
-    #[serde(alias = "Batch Number", alias = "batch_number")]
+    #[serde(alias = "Batch Number", alias = "batch_number", alias = "Lot Number", alias = "Lot number")]
     pub batch_number: String,
+    #[serde(alias = "Catalog Number", alias = "cat_number", alias = "Catalogue No", alias = "Catalog #")]
+    pub cat_number: Option<String>,
     pub supplier: Option<String>,
     #[serde(alias = "quantity", alias = "Quantity", alias = "Amount")]
     pub quantity: f64, 
-    #[serde(alias = "unit", alias = "Unit", alias = "units")]
+    #[serde(alias = "unit", alias = "Unit", alias = "units", alias = "Units", alias = "Umits")]
     pub units: String,
+    #[serde(alias = "Pack_size", alias = "Pack size", alias = "Pack Size", alias = "PackSize", alias = "pack_size", alias = "Unit Size")]
+    pub pack_size: Option<f64>,
     
     #[serde(default, deserialize_with = "deserialize_flexible_date")] // <--- ПРИМЕНЕНО ЗДЕСЬ
     pub expiration_date: Option<String>,
@@ -311,8 +315,10 @@ struct PreparedBatch {
     id: String,
     reagent_id: String,
     batch_number: String,
+    cat_number: Option<String>,
     quantity: f64,
     unit: String,
+    pack_size: Option<f64>,
     expiry_date: Option<String>,
     location: Option<String>,
     owner_id: String,
@@ -460,8 +466,10 @@ async fn import_reagents_logic(pool: &SqlitePool, reagents: Vec<ReagentImportDto
                     id: Uuid::new_v4().to_string(),
                     reagent_id: reagent_id.clone(),
                     batch_number: batch_num.trim().to_string(),
+                    cat_number: r.catalog_number.clone(),
                     quantity: qty,
                     unit: unit.clone(),
+                    pack_size: r.pack_size,
                     expiry_date: r.expiry_date.clone(),
                     location: r.location.clone(),
                     owner_id: owner_id,
@@ -544,19 +552,21 @@ async fn import_reagents_logic(pool: &SqlitePool, reagents: Vec<ReagentImportDto
     
     for chunk in prepared_batches.chunks(BATCH_CHUNK_SIZE) {
         let values_clause: String = chunk.iter()
-            .map(|_| "(?,?,?,?,?,0.0,?,?,?,'available',?,?,?,?,?)")
+            .map(|_| "(?,?,?,?,?,?,0.0,?,?,?,?,'available',?,?,?,?,?)")
             .collect::<Vec<_>>()
             .join(",");
         
         let sql = format!(
             r#"INSERT INTO batches (
-                id, reagent_id, batch_number, quantity, original_quantity,
-                reserved_quantity, unit, expiry_date, location, status,
+                id, reagent_id, batch_number, cat_number, quantity, original_quantity,
+                reserved_quantity, unit, pack_size, expiry_date, location, status,
                 received_date, created_at, updated_at, created_by, updated_by
             ) VALUES {}
             ON CONFLICT(reagent_id, batch_number) DO UPDATE SET 
                 quantity = quantity + excluded.quantity,
-                original_quantity = original_quantity + excluded.original_quantity"#,
+                original_quantity = original_quantity + excluded.original_quantity,
+                pack_size = COALESCE(excluded.pack_size, pack_size),
+                cat_number = COALESCE(excluded.cat_number, cat_number)"#,
             values_clause
         );
         
@@ -566,9 +576,11 @@ async fn import_reagents_logic(pool: &SqlitePool, reagents: Vec<ReagentImportDto
                 .bind(&b.id)
                 .bind(&b.reagent_id)
                 .bind(&b.batch_number)
+                .bind(&b.cat_number)
                 .bind(b.quantity)
                 .bind(b.quantity)
                 .bind(&b.unit)
+                .bind(&b.pack_size)
                 .bind(&b.expiry_date)
                 .bind(&b.location)
                 .bind(&now)
@@ -743,9 +755,11 @@ async fn import_batches_logic(pool: &SqlitePool, batches: Vec<BatchImportDto>) -
         id: String,
         reagent_id: String,
         batch_number: String,
+        cat_number: Option<String>,
         supplier: Option<String>,
         quantity: f64,
         units: String,
+        pack_size: Option<f64>,
         expiration_date: Option<String>,
         location: Option<String>,
         notes: Option<String>,
@@ -764,9 +778,11 @@ async fn import_batches_logic(pool: &SqlitePool, batches: Vec<BatchImportDto>) -
             id: Uuid::new_v4().to_string(),
             reagent_id: r_id,
             batch_number: b.batch_number.trim().to_string(),
+            cat_number: b.cat_number.clone(),
             supplier: b.supplier.clone(),
             quantity: b.quantity,
             units: b.units.clone(),
+            pack_size: b.pack_size,
             expiration_date: b.expiration_date.clone(),
             location: b.location.clone(),
             notes: b.notes.clone(),
@@ -789,20 +805,22 @@ async fn import_batches_logic(pool: &SqlitePool, batches: Vec<BatchImportDto>) -
     
     for chunk in prepared.chunks(BATCH_CHUNK) {
         let values_clause: String = chunk.iter()
-            .map(|_| "(?,?,?,?,?,?,0.0,?,?,?,?,?,datetime('now'),'available')")
+            .map(|_| "(?,?,?,?,?,?,?,0.0,?,?,?,?,?,?,datetime('now'),'available')")
             .collect::<Vec<_>>()
             .join(",");
         
         let sql = format!(
             r#"INSERT INTO batches (
-                id, reagent_id, batch_number, supplier, 
+                id, reagent_id, batch_number, cat_number, supplier, 
                 quantity, original_quantity, reserved_quantity,
-                unit, expiry_date, received_date,
+                unit, pack_size, expiry_date, received_date,
                 location, notes, updated_at, status
             ) VALUES {}
             ON CONFLICT(reagent_id, batch_number) DO UPDATE SET 
                 quantity = quantity + excluded.quantity,
-                original_quantity = original_quantity + excluded.original_quantity"#,
+                original_quantity = original_quantity + excluded.original_quantity,
+                pack_size = COALESCE(excluded.pack_size, pack_size),
+                cat_number = COALESCE(excluded.cat_number, cat_number)"#,
             values_clause
         );
         
@@ -812,10 +830,12 @@ async fn import_batches_logic(pool: &SqlitePool, batches: Vec<BatchImportDto>) -
                 .bind(&b.id)
                 .bind(&b.reagent_id)
                 .bind(&b.batch_number)
+                .bind(&b.cat_number)
                 .bind(&b.supplier)
                 .bind(b.quantity)
                 .bind(b.quantity)
                 .bind(&b.units)
+                .bind(&b.pack_size)
                 .bind(&b.expiration_date)
                 .bind(&now)
                 .bind(&b.location)

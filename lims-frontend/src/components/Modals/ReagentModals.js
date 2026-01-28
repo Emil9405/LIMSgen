@@ -34,7 +34,7 @@ export const CreateReagentModal = ({ isOpen, onClose, onSave }) => {
   const [error, setError] = useState('');
   const [reagentData, setReagentData] = useState({
     name: '', formula: '', molecular_weight: '', cas_number: '',
-    manufacturer: '', status: 'active', description: '',
+    status: 'active', description: '',
     storage_conditions: '', appearance: '', hazard_pictograms: ''
   });
   const [batchData, setBatchData] = useState({
@@ -66,8 +66,7 @@ export const CreateReagentModal = ({ isOpen, onClose, onSave }) => {
       const batchPayload = cleanPayload({ 
         ...batchData, 
         quantity: parseFloat(batchData.quantity),
-        pack_size: batchData.pack_size ? parseFloat(batchData.pack_size) : null,
-        manufacturer: reagentData.manufacturer 
+        pack_size: batchData.pack_size ? parseFloat(batchData.pack_size) : null
       });
       if (batchPayload.expiry_date) batchPayload.expiry_date = `${batchPayload.expiry_date}T00:00:00Z`;
       await api.createBatch(newReagentId, batchPayload);
@@ -139,13 +138,7 @@ export const CreateReagentModal = ({ isOpen, onClose, onSave }) => {
                   onChange={handleReagentChange} 
                 />
               </FormGroup>
-              <FormGroup label="Manufacturer">
-                <Input 
-                  name="manufacturer" 
-                  value={reagentData.manufacturer} 
-                  onChange={handleReagentChange} 
-                />
-              </FormGroup>
+              
             </div>
             <div style={styles.twoColGrid}>
               <FormGroup label="Storage Conditions">
@@ -267,7 +260,7 @@ export const CreateReagentModal = ({ isOpen, onClose, onSave }) => {
 export const EditReagentModal = ({ isOpen, onClose, reagent, onSave }) => {
   const [formData, setFormData] = useState({
     name: '', formula: '', molecular_weight: '', cas_number: '',
-    manufacturer: '', status: 'active', description: '',
+    status: 'active', description: '',
     storage_conditions: '', appearance: '', hazard_pictograms: ''
   });
   const [loading, setLoading] = useState(false);
@@ -279,8 +272,7 @@ export const EditReagentModal = ({ isOpen, onClose, reagent, onSave }) => {
         name: reagent.name || '',
         formula: reagent.formula || '',
         molecular_weight: reagent.molecular_weight || '',
-        cas_number: reagent.cas_number || '',
-        manufacturer: reagent.manufacturer || '',
+        cas_number: reagent.cas_number || '',        
         status: reagent.status || 'active',
         description: reagent.description || '',
         storage_conditions: reagent.storage_conditions || '',
@@ -346,9 +338,8 @@ export const EditReagentModal = ({ isOpen, onClose, reagent, onSave }) => {
             </FormGroup>
           </div>
           <div style={styles.threeColGrid}>
-            <FormGroup label="Manufacturer">
-              <Input name="manufacturer" value={formData.manufacturer} onChange={handleChange} />
-            </FormGroup>
+            
+            
             <FormGroup label="Storage Conditions">
               <Input name="storage_conditions" value={formData.storage_conditions} onChange={handleChange} />
             </FormGroup>
@@ -552,10 +543,6 @@ export const ViewReagentModal = ({ isOpen, onClose, reagent, onEdit }) => {
               <div style={{ fontWeight: '500' }}>
                 {reagent.molecular_weight ? `${reagent.molecular_weight} g/mol` : '—'}
               </div>
-            </div>
-            <div>
-              <div style={{ fontSize: '0.75rem', color: '#718096', marginBottom: '0.25rem' }}>Manufacturer</div>
-              <div style={{ fontWeight: '500' }}>{reagent.manufacturer || '—'}</div>
             </div>
             <div>
               <div style={{ fontSize: '0.75rem', color: '#718096', marginBottom: '0.25rem' }}>Hazard</div>

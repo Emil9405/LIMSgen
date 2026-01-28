@@ -56,7 +56,7 @@ const PrinterIcon = ({ size = 24, color = "currentColor" }) => (
 const COLUMN_WIDTHS = {
   expandIcon: '32px',
   actions: '260px',
-  gridColumns: '2fr 1fr 80px 1fr 1fr 1fr 100px'
+  gridColumns: '2fr 1fr 80px 1fr 1fr 100px'
 };
 
 const accordionStyles = {
@@ -145,7 +145,7 @@ const accordionStyles = {
   },
   batchCard: {
     display: 'grid',
-    gridTemplateColumns: '110px 90px 90px 80px 90px 100px 110px 1fr',
+    gridTemplateColumns: '100px 80px 70px 70px 100px 90px 90px 70px 80px 90px 90px 1fr',
     gap: '12px',
     padding: '14px',
     backgroundColor: '#fff',
@@ -405,7 +405,6 @@ const ReagentAccordionItem = ({
             <div style={accordionStyles.reagentField} title={reagent.formula}>{reagent.formula || '—'}</div>
             <div style={accordionStyles.reagentField}>{reagent.molecular_weight || '—'}</div>
             <div style={accordionStyles.reagentField} title={reagent.cas_number}>{reagent.cas_number || '—'}</div>
-            <div style={accordionStyles.reagentField} title={reagent.manufacturer}>{reagent.manufacturer || '—'}</div>
             <div>
               <Badge variant={reagent.status === 'active' ? 'success' : 'warning'}>
                 {reagent.status || 'Unknown'}
@@ -471,7 +470,7 @@ const ReagentAccordionItem = ({
                       background: 'linear-gradient(135deg, rgba(49, 130, 206, 0.08) 0%, rgba(56, 161, 105, 0.08) 100%)',
                       fontWeight: '700', fontSize: '0.7rem', color: '#1a365d', textTransform: 'uppercase', letterSpacing: '0.05em', border: 'none'
                     }}>
-                      <div>Batch #</div><div>Qty</div><div>Packs</div><div>Reserved</div><div>Status</div><div>Expiry</div><div>Location</div><div>Actions</div>
+                      <div>Batch #</div><div>Qty</div><div>Packs</div><div>Pack Size</div><div>Manufacturer</div><div>Catalog #</div><div>Supplier</div><div>Reserved</div><div>Status</div><div>Expiry</div><div>Location</div><div>Actions</div>
                     </div>
 
                     {batches.map(batch => {
@@ -548,6 +547,26 @@ const ReagentAccordionItem = ({
                                   {packCount ? `${packCount} pcs` : '—'}
                                 </span>
                               )}
+                            </div>
+                            
+                            {/* Pack Size column */}
+                            <div style={accordionStyles.batchValue} title={batch.pack_size ? `${batch.pack_size} ${batch.unit}` : ''}>
+                              {batch.pack_size ? `${batch.pack_size} ${batch.unit}` : '—'}
+                            </div>
+                            
+                            {/* Manufacturer column */}
+                            <div style={{ ...accordionStyles.batchValue, fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={batch.manufacturer || reagent.manufacturer}>
+                              {batch.manufacturer || reagent.manufacturer || '—'}
+                            </div>
+                            
+                            {/* Catalog Number column */}
+                            <div style={{ ...accordionStyles.batchValue, fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={batch.cat_number}>
+                              {batch.cat_number || '—'}
+                            </div>
+                            
+                            {/* Supplier column */}
+                            <div style={{ ...accordionStyles.batchValue, fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={batch.supplier}>
+                              {batch.supplier || '—'}
                             </div>
                             
                             <div style={{ ...accordionStyles.batchValue, color: (batch.reserved_quantity||0) > 0 ? '#dd6b20' : '#a0aec0' }}>
@@ -893,7 +912,7 @@ const Reagents = ({ user }) => {
           <div style={{ display: 'flex', padding: '14px 18px', background: 'linear-gradient(135deg, rgba(49, 130, 206, 0.08) 0%, rgba(56, 161, 105, 0.08) 100%)', borderRadius: '12px 12px 0 0', fontWeight: '700', fontSize: '0.7rem', color: '#1a365d', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '2px', gap: '14px' }}>
             <div style={{ width: COLUMN_WIDTHS.expandIcon, flexShrink: 0 }}></div>
             <div style={{ flex: 1, display: 'grid', gridTemplateColumns: COLUMN_WIDTHS.gridColumns, gap: '12px' }}>
-              <div>Name</div><div>Formula</div><div>MW</div><div>CAS</div><div>Manufacturer</div><div>Status</div><div>Stock</div>
+              <div>Name</div><div>Formula</div><div>MW</div><div>CAS</div><div>Status</div><div>Stock</div>
             </div>
             <div style={{ width: COLUMN_WIDTHS.actions, flexShrink: 0 }}>Actions</div>
           </div>
