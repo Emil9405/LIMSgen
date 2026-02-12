@@ -229,6 +229,7 @@ pub async fn login(
     app_state: web::Data<Arc<AppState>>,
     auth_service: web::Data<Arc<AuthService>>,
     request: web::Json<LoginRequest>,
+    http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
     request.validate()?;
 
@@ -282,6 +283,9 @@ pub async fn login(
     };
 
     log::info!("User {} logged in successfully", user.username);
+    crate::audit::audit(
+    &app_state.db_pool, &user.id, "login", "user", &user.id,
+    &format!("User {} logged in", user.username), &http_request).await;
 
     Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
         response,
@@ -336,6 +340,10 @@ pub async fn register(
     // Create user (this will start its own transaction internally)
     let user = User::create(&app_state.db_pool, request.into_inner(), role, &auth_service).await?;
 
+    // Save before into() consumes user
+    let user_id = user.id.clone();
+    let user_name = user.username.clone();
+
     // Generate token
     let token = auth_service.generate_token(&user)?;
 
@@ -344,6 +352,11 @@ pub async fn register(
         expires_in: 24 * 3600,
         user: user.into(),
     };
+
+    crate::audit::audit(
+        &app_state.db_pool, &user_id, "register", "user", &user_id,
+        &format!("New user registered: {}", user_name), &http_request,
+    ).await;
 
     log::info!("New user registered: {} with role {:?}", response.user.username, response.user.role);
 
@@ -406,6 +419,11 @@ pub async fn change_password(
     ).await?;
 
     log::info!("User {} changed password", user.username);
+
+    crate::audit::audit(
+        &app_state.db_pool, &claims.sub, "change_password", "user", &claims.sub,
+        &format!("User {} changed password", user.username), &http_request,
+    ).await;
 
     Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
         (),
@@ -528,6 +546,11 @@ pub async fn create_user(
         claims.username, request.username, role
     );
 
+    crate::audit::audit(
+        &app_state.db_pool, &claims.sub, "create_user", "user", &id,
+        &format!("Admin created user: {}", request.username), &http_request,
+    ).await;
+
     Ok(HttpResponse::Created().json(ApiResponse::success_with_message(
         CreateUserResponse {
             user: user_info,
@@ -595,6 +618,10 @@ pub async fn update_user(
 
             if result.rows_affected() > 0 {
                 log::info!("Admin {} updated user {} (role and status)", claims.username, user_id);
+                crate::audit::audit(
+                    &app_state.db_pool, &claims.sub, "update_user", "user", &user_id,
+                    &format!("Updated user {} role and status", user_id), &http_request,
+                ).await;
                 return Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
                     (),
                     "User updated successfully".to_string(),
@@ -613,6 +640,10 @@ pub async fn update_user(
 
             if result.rows_affected() > 0 {
                 log::info!("Admin {} updated user {} (role only)", claims.username, user_id);
+                crate::audit::audit(
+                    &app_state.db_pool, &claims.sub, "update_user", "user", &user_id,
+                    &format!("Updated user {} role", user_id), &http_request,
+                ).await;
                 return Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
                     (),
                     "User updated successfully".to_string(),
@@ -632,6 +663,10 @@ pub async fn update_user(
 
         if result.rows_affected() > 0 {
             log::info!("Admin {} updated user {} (status only)", claims.username, user_id);
+            crate::audit::audit(
+                &app_state.db_pool, &claims.sub, "update_user", "user", &user_id,
+                &format!("Updated user {} status", user_id), &http_request,
+            ).await;
             return Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
                 (),
                 "User updated successfully".to_string(),
@@ -649,6 +684,10 @@ pub async fn update_user(
 
         if result.rows_affected() > 0 {
             log::info!("Admin {} updated user {} (timestamp only)", claims.username, user_id);
+            crate::audit::audit(
+                &app_state.db_pool, &claims.sub, "update_user", "user", &user_id,
+                &format!("Updated user {}", user_id), &http_request,
+            ).await;
             return Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
                 (),
                 "User updated successfully".to_string(),
@@ -687,6 +726,10 @@ pub async fn change_user_password(
 
     if result.rows_affected() > 0 {
         log::info!("Admin {} changed password for user {}", claims.username, user_id);
+        crate::audit::audit(
+            &app_state.db_pool, &claims.sub, "change_user_password", "user", &user_id,
+            &format!("Admin reset password for user {}", user_id), &http_request,
+        ).await;
         Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
             (),
             "Password changed successfully".to_string(),
@@ -732,6 +775,10 @@ pub async fn delete_user(
 
     if result.rows_affected() > 0 {
         log::info!("Admin {} deleted user {}", claims.username, user_id);
+        crate::audit::audit(
+            &app_state.db_pool, &claims.sub, "delete_user", "user", &user_id,
+            &format!("Admin deleted user {}", target_user.username), &http_request,
+        ).await;
         Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
             (),
             "User deleted successfully".to_string(),

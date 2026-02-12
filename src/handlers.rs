@@ -249,6 +249,11 @@ pub async fn use_reagent(
         .await?;
 
     tx.commit().await?;
+    crate::audit::audit(
+    &app_state.db_pool, &claims.sub, "use_reagent", "batch", &batch_id,
+    &format!("Used {} {} from batch {}", request.quantity_used, batch.unit, batch_id),
+    &http_request
+).await;
 
     log::info!(
         "User {} used {} {} from batch {} (reagent {})",
@@ -407,6 +412,10 @@ pub async fn force_jwt_rotation(
         .map_err(|e| ApiError::InternalServerError(format!("Failed to rotate JWT: {}", e)))?;
 
     log::warn!("Manual JWT rotation triggered by user: {}", claims.username);
+crate::audit::audit(
+    &app_state.db_pool, &claims.sub, "jwt_rotation", "system", "jwt",
+    "Manual JWT rotation triggered", &http_request
+).await;
 
     #[derive(serde::Serialize)]
     struct RotationResponse {

@@ -41,6 +41,7 @@ use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 // Module declarations
 mod auth;
+mod audit;
 mod auth_handlers;
 mod filter_handlers;
 mod config;
@@ -141,7 +142,10 @@ async fn create_experiment_protected(
 ) -> ApiResult<HttpResponse> {
     auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Create, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
-    create_experiment(app_state, experiment, claims.sub).await
+    let user_id = claims.sub.clone();
+    let response = create_experiment(app_state.clone(), experiment, claims.sub).await?;
+    audit::audit(&app_state.db_pool, &user_id, "create", "experiment", "", "Created experiment", &http_request).await;
+    Ok(response)
 }
 
 async fn update_experiment_protected(
@@ -152,7 +156,10 @@ async fn update_experiment_protected(
 ) -> ApiResult<HttpResponse> {
     auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
-    update_experiment(app_state, path, update_data, claims.sub).await
+    let user_id = claims.sub.clone();
+    let response = update_experiment(app_state.clone(), path, update_data, claims.sub).await?;
+    audit::audit(&app_state.db_pool, &user_id, "edit", "experiment", "", "Updated experiment", &http_request).await;
+    Ok(response)
 }
 
 async fn delete_experiment_protected(
@@ -162,8 +169,11 @@ async fn delete_experiment_protected(
 ) -> ApiResult<HttpResponse> {
     auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Delete, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
+    let user_id = claims.sub.clone();
     // FIXED: pass user_id as third argument
-    delete_experiment(app_state, path, claims.sub).await
+    let response = delete_experiment(app_state.clone(), path, claims.sub).await?;
+    audit::audit(&app_state.db_pool, &user_id, "delete", "experiment", "", "Deleted experiment", &http_request).await;
+    Ok(response)
 }
 
 async fn add_experiment_reagent_protected(
@@ -243,7 +253,10 @@ async fn create_reagent_protected(
 ) -> ApiResult<HttpResponse> {
     auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Create, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
-    reagent_handlers::create_reagent(app_state, reagent, claims.sub).await
+    let user_id = claims.sub.clone();
+    let response = reagent_handlers::create_reagent(app_state.clone(), reagent, claims.sub).await?;
+    audit::audit(&app_state.db_pool, &user_id, "create", "reagent", "", "Created reagent", &http_request).await;
+    Ok(response)
 }
 
 async fn update_reagent_protected(
@@ -254,7 +267,10 @@ async fn update_reagent_protected(
 ) -> error::ApiResult<HttpResponse> {
     auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
-    reagent_handlers::update_reagent(app_state, path, update_data, claims.sub).await
+    let user_id = claims.sub.clone();
+    let response = reagent_handlers::update_reagent(app_state.clone(), path, update_data, claims.sub).await?;
+    audit::audit(&app_state.db_pool, &user_id, "edit", "reagent", "", "Updated reagent", &http_request).await;
+    Ok(response)
 }
 
 async fn delete_reagent_protected(
@@ -263,7 +279,10 @@ async fn delete_reagent_protected(
     http_request: HttpRequest,
 ) -> error::ApiResult<HttpResponse> {
     auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Delete, &app_state.db_pool).await?;
-    reagent_handlers::delete_reagent(app_state, path).await
+    let claims = auth::get_current_user(&http_request)?;
+    let response = reagent_handlers::delete_reagent(app_state.clone(), path).await?;
+    audit::audit(&app_state.db_pool, &claims.sub, "delete", "reagent", "", "Deleted reagent", &http_request).await;
+    Ok(response)
 }
 
 // ==================== BATCH PROTECTED WRAPPERS ====================
@@ -276,7 +295,10 @@ async fn create_batch_protected(
 ) -> error::ApiResult<HttpResponse> {
     auth_handlers::check_batch_permission_async(&http_request, auth_handlers::BatchAction::Create, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
-    batch_handlers::create_batch(app_state, path, batch, claims.sub).await
+    let user_id = claims.sub.clone();
+    let response = batch_handlers::create_batch(app_state.clone(), path, batch, claims.sub).await?;
+    audit::audit(&app_state.db_pool, &user_id, "create", "batch", "", "Created batch", &http_request).await;
+    Ok(response)
 }
 
 async fn update_batch_protected(
@@ -287,7 +309,10 @@ async fn update_batch_protected(
 ) -> error::ApiResult<HttpResponse> {
     auth_handlers::check_batch_permission_async(&http_request, auth_handlers::BatchAction::Edit, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
-    batch_handlers::update_batch(app_state, path, update_data, claims.sub).await
+    let user_id = claims.sub.clone();
+    let response = batch_handlers::update_batch(app_state.clone(), path, update_data, claims.sub).await?;
+    audit::audit(&app_state.db_pool, &user_id, "edit", "batch", "", "Updated batch", &http_request).await;
+    Ok(response)
 }
 
 async fn delete_batch_protected(
@@ -297,8 +322,11 @@ async fn delete_batch_protected(
 ) -> error::ApiResult<HttpResponse> {
     auth_handlers::check_batch_permission_async(&http_request, auth_handlers::BatchAction::Delete, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
+    let user_id = claims.sub.clone();
     // FIXED: pass user_id as third argument
-    batch_handlers::delete_batch(app_state, path, claims.sub).await
+    let response = batch_handlers::delete_batch(app_state.clone(), path, claims.sub).await?;
+    audit::audit(&app_state.db_pool, &user_id, "delete", "batch", "", "Deleted batch", &http_request).await;
+    Ok(response)
 }
 
 // ==================== EQUIPMENT PROTECTED WRAPPERS ====================
@@ -310,7 +338,10 @@ async fn create_equipment_protected(
 ) -> ApiResult<HttpResponse> {
     auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Create, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
-    equipment_handlers::create_equipment(app_state, equipment, claims.sub).await
+    let user_id = claims.sub.clone();
+    let response = equipment_handlers::create_equipment(app_state.clone(), equipment, claims.sub).await?;
+    audit::audit(&app_state.db_pool, &user_id, "create", "equipment", "", "Created equipment", &http_request).await;
+    Ok(response)
 }
 
 async fn update_equipment_protected(
@@ -321,7 +352,10 @@ async fn update_equipment_protected(
 ) -> ApiResult<HttpResponse> {
     auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
-    equipment_handlers::update_equipment(app_state, path, update_data, claims.sub).await
+    let user_id = claims.sub.clone();
+    let response = equipment_handlers::update_equipment(app_state.clone(), path, update_data, claims.sub).await?;
+    audit::audit(&app_state.db_pool, &user_id, "edit", "equipment", "", "Updated equipment", &http_request).await;
+    Ok(response)
 }
 
 async fn delete_equipment_protected(
@@ -330,7 +364,10 @@ async fn delete_equipment_protected(
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
     auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete, &app_state.db_pool).await?;
-    equipment_handlers::delete_equipment(app_state, path).await
+    let claims = auth::get_current_user(&http_request)?;
+    let response = equipment_handlers::delete_equipment(app_state.clone(), path).await?;
+    audit::audit(&app_state.db_pool, &claims.sub, "delete", "equipment", "", "Deleted equipment", &http_request).await;
+    Ok(response)
 }
 
 // Parts
@@ -473,7 +510,10 @@ async fn create_room_protected(
 ) -> ApiResult<HttpResponse> {
     auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Create, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
-    room_handlers::create_room(app_state, room, claims.sub).await
+    let user_id = claims.sub.clone();
+    let response = room_handlers::create_room(app_state.clone(), room, claims.sub).await?;
+    audit::audit(&app_state.db_pool, &user_id, "create", "room", "", "Created room", &http_request).await;
+    Ok(response)
 }
 
 async fn update_room_protected(
@@ -484,7 +524,10 @@ async fn update_room_protected(
 ) -> ApiResult<HttpResponse> {
     auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
-    room_handlers::update_room(app_state, path, update_data, claims.sub).await
+    let user_id = claims.sub.clone();
+    let response = room_handlers::update_room(app_state.clone(), path, update_data, claims.sub).await?;
+    audit::audit(&app_state.db_pool, &user_id, "edit", "room", "", "Updated room", &http_request).await;
+    Ok(response)
 }
 
 async fn delete_room_protected(
@@ -493,7 +536,10 @@ async fn delete_room_protected(
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
     auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete, &app_state.db_pool).await?;
-    room_handlers::delete_room(app_state, path).await
+    let claims = auth::get_current_user(&http_request)?;
+    let response = room_handlers::delete_room(app_state.clone(), path).await?;
+    audit::audit(&app_state.db_pool, &claims.sub, "delete", "room", "", "Deleted room", &http_request).await;
+    Ok(response)
 }
 
 // ==================== STUB HANDLERS FOR MISSING FUNCTIONS ====================

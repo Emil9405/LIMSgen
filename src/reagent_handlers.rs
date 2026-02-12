@@ -589,7 +589,7 @@ pub async fn delete_reagent(
         .ok_or_else(|| ApiError::not_found("Reagent"))?;
 
     // Проверяем наличие батчей
-    let (batch_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM batches WHERE reagent_id = ?")
+    let (batch_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM batches WHERE reagent_id = ? AND deleted_at IS NULL")
         .bind(&id)
         .fetch_one(pool)
         .await?;
