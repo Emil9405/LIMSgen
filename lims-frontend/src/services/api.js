@@ -800,6 +800,17 @@ export const api = {
         const response = await apiCall(`${API_V1_BASE}/dashboard/stats`);
         return response.data || response;
     },
+    // Recent activity from audit logs
+    getRecentActivity: async () => {
+        const response = await apiCall(`${API_V1_BASE}/dashboard/recent-activity`);
+        return response.data || response;
+    },
+
+    // Dashboard chart trends
+    getDashboardTrends: async () => {
+        const response = await apiCall(`${API_V1_BASE}/dashboard/trends`);
+        return response.data || response;
+    },
 
     getActivityLog: async (params = {}) => {
         const queryString = new URLSearchParams(params).toString();

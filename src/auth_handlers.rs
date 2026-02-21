@@ -8,6 +8,7 @@ use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 
 use crate::handlers::ApiResponse;
+use crate::audit::ChangeSet;
 use crate::auth::{
     AuthService, User, LoginRequest, RegisterRequest, ChangePasswordRequest,
     LoginResponse, UserInfo, UserRole, get_current_user, check_permission
@@ -574,9 +575,16 @@ pub async fn create_user(
         claims.username, request.username, role
     );
 
-    crate::audit::audit(
+    let mut cs = ChangeSet::new();
+    cs.created("username", &request.username);
+    cs.created("email", &request.email);
+    cs.created("role", role.as_str());
+    if let Some(ref name) = request.name { cs.created("name", name); }
+
+    crate::audit::audit_with_changes(
         &app_state.db_pool, &claims.sub, "create_user", "user", &id,
-        &format!("Admin created user: {}", request.username), &http_request,
+        &format!("Created user: {}", cs.to_description()),
+        &cs, &http_request,
     ).await;
 
     Ok(HttpResponse::Created().json(ApiResponse::success_with_message(
@@ -701,10 +709,34 @@ pub async fn update_user(
     let result = query.execute(&app_state.db_pool).await?;
 
     if result.rows_affected() > 0 {
-        log::info!("Admin {} updated user {}", claims.username, user_id);
-        crate::audit::audit(
+        // Build detailed change log
+        let mut cs = ChangeSet::new();
+        if let Some(ref new_username) = request.username {
+            cs.add("username", &existing_user.username, new_username);
+        }
+        if let Some(ref new_email) = request.email {
+            cs.add("email", &existing_user.email, new_email);
+        }
+        if let Some(ref new_name) = request.name {
+            cs.add_opt("name", &existing_user.name, &Some(new_name.clone()));
+        }
+        if let Some(ref new_role) = request.role {
+            cs.add("role", &existing_user.role, &new_role.to_lowercase());
+        }
+        if let Some(new_active) = request.is_active {
+            cs.add_bool("is_active", existing_user.is_active, new_active);
+        }
+
+        let desc = if cs.has_changes() {
+            format!("User {} updated: {}", existing_user.username, cs.to_description())
+        } else {
+            format!("User {} updated (no significant changes)", existing_user.username)
+        };
+
+        log::info!("Admin {} updated user {}: {}", claims.username, user_id, desc);
+        crate::audit::audit_with_changes(
             &app_state.db_pool, &claims.sub, "update_user", "user", &user_id,
-            &format!("Updated user {}", user_id), &http_request,
+            &desc, &cs, &http_request,
         ).await;
         return Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
             (),
@@ -791,10 +823,16 @@ pub async fn delete_user(
         .await?;
 
     if result.rows_affected() > 0 {
+        let mut cs = ChangeSet::new();
+        cs.deleted("username", &target_user.username);
+        cs.deleted("email", &target_user.email);
+        cs.deleted("role", &target_user.role);
+
         log::info!("Admin {} deleted user {}", claims.username, user_id);
-        crate::audit::audit(
+        crate::audit::audit_with_changes(
             &app_state.db_pool, &claims.sub, "delete_user", "user", &user_id,
-            &format!("Admin deleted user {}", target_user.username), &http_request,
+            &format!("Deleted user: {}", cs.to_description()),
+            &cs, &http_request,
         ).await;
         Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
             (),
@@ -875,6 +913,7 @@ pub fn check_batch_permission(
 }
 
 /// Async version that checks custom permissions from user_permissions table
+/// Custom permissions override role-based defaults when present
 pub async fn check_batch_permission_async(
     http_request: &HttpRequest,
     action: BatchAction,
@@ -882,7 +921,50 @@ pub async fn check_batch_permission_async(
 ) -> ApiResult<()> {
     let claims = get_current_user(http_request)?;
 
-    // First check role-based permissions
+    // View is always allowed
+    if matches!(action, BatchAction::View) {
+        return Ok(());
+    }
+
+    let permission_key = match action {
+        BatchAction::Create => "create_batch",
+        BatchAction::Edit => "edit_batch",
+        BatchAction::Delete => "delete_batch",
+        BatchAction::View => return Ok(()),
+    };
+
+    // First check if user has custom permissions — they take priority over role
+    let result: Option<(String,)> = sqlx::query_as(
+        "SELECT permissions FROM user_permissions WHERE user_id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        log::error!("DB error checking permissions: {:?}", e);
+        ApiError::InternalServerError("Database error".to_string())
+    })?;
+
+    if let Some((perms_json,)) = result {
+        // Custom permissions exist — use them as source of truth
+        match serde_json::from_str::<std::collections::HashMap<String, bool>>(&perms_json) {
+            Ok(perms) => {
+                if perms.get(permission_key).copied().unwrap_or(false) {
+                    log::debug!("User {} granted {} via custom permissions", claims.username, permission_key);
+                    return Ok(());
+                } else {
+                    log::info!("User {} denied {} via custom permissions", claims.username, permission_key);
+                    return Err(ApiError::Forbidden("Insufficient permissions".to_string()));
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to parse permissions JSON for user {}: {:?}", claims.username, e);
+                // Fall through to role-based check on parse error
+            }
+        }
+    }
+
+    // No custom permissions found — fall back to role-based defaults
     let role_allowed = match action {
         BatchAction::Create => claims.role.can_create_batches(),
         BatchAction::Edit => claims.role.can_edit_batches(),
@@ -895,16 +977,31 @@ pub async fn check_batch_permission_async(
         return Ok(());
     }
 
-    // If role doesn't allow, check custom permissions from user_permissions table
+    Err(ApiError::Forbidden("Insufficient permissions".to_string()))
+}
+
+/// Async version for reagent permissions
+/// Custom permissions override role-based defaults when present
+pub async fn check_reagent_permission_async(
+    http_request: &HttpRequest,
+    action: ReagentAction,
+    pool: &sqlx::SqlitePool,
+) -> ApiResult<()> {
+    let claims = get_current_user(http_request)?;
+
+    // View is always allowed
+    if matches!(action, ReagentAction::View) {
+        return Ok(());
+    }
+
     let permission_key = match action {
-        BatchAction::Create => "create_batch",
-        BatchAction::Edit => "edit_batch",
-        BatchAction::Delete => "delete_batch",
-        BatchAction::View => return Ok(()),
+        ReagentAction::Create => "create_reagent",
+        ReagentAction::Edit => "edit_reagent",
+        ReagentAction::Delete => "delete_reagent",
+        ReagentAction::View => return Ok(()),
     };
 
-    log::info!("Checking custom permissions for user {} ({}), action: {}", claims.username, claims.sub, permission_key);
-
+    // First check if user has custom permissions — they take priority over role
     let result: Option<(String,)> = sqlx::query_as(
         "SELECT permissions FROM user_permissions WHERE user_id = ?"
     )
@@ -917,37 +1014,25 @@ pub async fn check_batch_permission_async(
     })?;
 
     if let Some((perms_json,)) = result {
-        log::info!("Found custom permissions for user {}: {}", claims.username, perms_json);
+        // Custom permissions exist — use them as source of truth
         match serde_json::from_str::<std::collections::HashMap<String, bool>>(&perms_json) {
             Ok(perms) => {
-                log::info!("Parsed permissions: {:?}", perms);
                 if perms.get(permission_key).copied().unwrap_or(false) {
-                    log::info!("User {} granted {} via custom permissions", claims.username, permission_key);
+                    log::debug!("User {} granted {} via custom permissions", claims.username, permission_key);
                     return Ok(());
                 } else {
-                    log::info!("Permission {} not granted for user {} (value: {:?})", 
-                        permission_key, claims.username, perms.get(permission_key));
+                    log::info!("User {} denied {} via custom permissions", claims.username, permission_key);
+                    return Err(ApiError::Forbidden("Insufficient permissions".to_string()));
                 }
             }
             Err(e) => {
                 log::error!("Failed to parse permissions JSON for user {}: {:?}", claims.username, e);
+                // Fall through to role-based check on parse error
             }
         }
-    } else {
-        log::info!("No custom permissions found for user {} ({})", claims.username, claims.sub);
     }
 
-    Err(ApiError::Forbidden("Insufficient permissions".to_string()))
-}
-
-/// Async version for reagent permissions
-pub async fn check_reagent_permission_async(
-    http_request: &HttpRequest,
-    action: ReagentAction,
-    pool: &sqlx::SqlitePool,
-) -> ApiResult<()> {
-    let claims = get_current_user(http_request)?;
-
+    // No custom permissions found — fall back to role-based defaults
     let role_allowed = match action {
         ReagentAction::Create => claims.role.can_create_reagents(),
         ReagentAction::Edit => claims.role.can_edit_reagents(),
@@ -960,47 +1045,6 @@ pub async fn check_reagent_permission_async(
         return Ok(());
     }
 
-    let permission_key = match action {
-        ReagentAction::Create => "create_reagent",
-        ReagentAction::Edit => "edit_reagent",
-        ReagentAction::Delete => "delete_reagent",
-        ReagentAction::View => return Ok(()),
-    };
-
-    log::info!("Checking custom permissions for user {} ({}), action: {}", claims.username, claims.sub, permission_key);
-
-    let result: Option<(String,)> = sqlx::query_as(
-        "SELECT permissions FROM user_permissions WHERE user_id = ?"
-    )
-    .bind(&claims.sub)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| {
-        log::error!("DB error checking permissions: {:?}", e);
-        ApiError::InternalServerError("Database error".to_string())
-    })?;
-
-    if let Some((perms_json,)) = result {
-        log::info!("Found custom permissions for user {}: {}", claims.username, perms_json);
-        match serde_json::from_str::<std::collections::HashMap<String, bool>>(&perms_json) {
-            Ok(perms) => {
-                log::info!("Parsed permissions: {:?}", perms);
-                if perms.get(permission_key).copied().unwrap_or(false) {
-                    log::info!("User {} granted {} via custom permissions", claims.username, permission_key);
-                    return Ok(());
-                } else {
-                    log::info!("Permission {} not granted for user {} (value: {:?})", 
-                        permission_key, claims.username, perms.get(permission_key));
-                }
-            }
-            Err(e) => {
-                log::error!("Failed to parse permissions JSON for user {}: {:?}", claims.username, e);
-            }
-        }
-    } else {
-        log::info!("No custom permissions found for user {} ({})", claims.username, claims.sub);
-    }
-
     Err(ApiError::Forbidden("Insufficient permissions".to_string()))
 }
 
@@ -1011,13 +1055,8 @@ pub async fn check_equipment_permission(
 ) -> ApiResult<()> {
     let claims = get_current_user(http_request)?;
 
-    let role_allowed = match action {
-        EquipmentAction::Create | EquipmentAction::Edit | EquipmentAction::Delete =>
-            claims.role.can_manage_equipment(),
-        EquipmentAction::View => true,
-    };
-
-    if role_allowed {
+    // View is always allowed
+    if matches!(action, EquipmentAction::View) {
         return Ok(());
     }
 
@@ -1028,6 +1067,7 @@ pub async fn check_equipment_permission(
         EquipmentAction::View => return Ok(()),
     };
 
+    // First check if user has custom permissions — they take priority over role
     let result: Option<(String,)> = sqlx::query_as(
         "SELECT permissions FROM user_permissions WHERE user_id = ?"
     )
@@ -1040,8 +1080,22 @@ pub async fn check_equipment_permission(
         if let Ok(perms) = serde_json::from_str::<std::collections::HashMap<String, bool>>(&perms_json) {
             if perms.get(permission_key).copied().unwrap_or(false) {
                 return Ok(());
+            } else {
+                return Err(ApiError::Forbidden("Insufficient permissions".to_string()));
             }
         }
+    }
+
+    // No custom permissions — fall back to role-based defaults
+    let role_allowed = match action {
+        EquipmentAction::Create => claims.role.can_create_equipment(),
+        EquipmentAction::Edit => claims.role.can_edit_equipment(),
+        EquipmentAction::Delete => claims.role.can_delete_equipment(),
+        EquipmentAction::View => true,
+    };
+
+    if role_allowed {
+        return Ok(());
     }
 
     Err(ApiError::Forbidden("Insufficient permissions".to_string()))
@@ -1054,14 +1108,8 @@ pub async fn check_experiment_permission(
 ) -> ApiResult<()> {
     let claims = get_current_user(http_request)?;
 
-    let role_allowed = match action {
-        ExperimentAction::Create => claims.role.can_create_experiments(),
-        ExperimentAction::Edit => claims.role.can_edit_experiments(),
-        ExperimentAction::Delete => claims.role.can_delete_experiments(),
-        ExperimentAction::View => true,
-    };
-
-    if role_allowed {
+    // View is always allowed
+    if matches!(action, ExperimentAction::View) {
         return Ok(());
     }
 
@@ -1072,6 +1120,7 @@ pub async fn check_experiment_permission(
         ExperimentAction::View => return Ok(()),
     };
 
+    // First check if user has custom permissions — they take priority over role
     let result: Option<(String,)> = sqlx::query_as(
         "SELECT permissions FROM user_permissions WHERE user_id = ?"
     )
@@ -1084,8 +1133,22 @@ pub async fn check_experiment_permission(
         if let Ok(perms) = serde_json::from_str::<std::collections::HashMap<String, bool>>(&perms_json) {
             if perms.get(permission_key).copied().unwrap_or(false) {
                 return Ok(());
+            } else {
+                return Err(ApiError::Forbidden("Insufficient permissions".to_string()));
             }
         }
+    }
+
+    // No custom permissions — fall back to role-based defaults
+    let role_allowed = match action {
+        ExperimentAction::Create => claims.role.can_create_experiments(),
+        ExperimentAction::Edit => claims.role.can_edit_experiments(),
+        ExperimentAction::Delete => claims.role.can_delete_experiments(),
+        ExperimentAction::View => true,
+    };
+
+    if role_allowed {
+        return Ok(());
     }
 
     Err(ApiError::Forbidden("Insufficient permissions".to_string()))
@@ -1098,14 +1161,8 @@ pub async fn check_room_permission(
 ) -> ApiResult<()> {
     let claims = get_current_user(http_request)?;
 
-    let role_allowed = match action {
-        RoomAction::Create => claims.role.can_create_rooms(),
-        RoomAction::Edit => claims.role.can_edit_rooms(),
-        RoomAction::Delete => claims.role.can_delete_rooms(),
-        RoomAction::View => true,
-    };
-
-    if role_allowed {
+    // View is always allowed
+    if matches!(action, RoomAction::View) {
         return Ok(());
     }
 
@@ -1116,6 +1173,7 @@ pub async fn check_room_permission(
         RoomAction::View => return Ok(()),
     };
 
+    // First check if user has custom permissions — they take priority over role
     let result: Option<(String,)> = sqlx::query_as(
         "SELECT permissions FROM user_permissions WHERE user_id = ?"
     )
@@ -1128,8 +1186,22 @@ pub async fn check_room_permission(
         if let Ok(perms) = serde_json::from_str::<std::collections::HashMap<String, bool>>(&perms_json) {
             if perms.get(permission_key).copied().unwrap_or(false) {
                 return Ok(());
+            } else {
+                return Err(ApiError::Forbidden("Insufficient permissions".to_string()));
             }
         }
+    }
+
+    // No custom permissions — fall back to role-based defaults
+    let role_allowed = match action {
+        RoomAction::Create => claims.role.can_create_rooms(),
+        RoomAction::Edit => claims.role.can_edit_rooms(),
+        RoomAction::Delete => claims.role.can_delete_rooms(),
+        RoomAction::View => true,
+    };
+
+    if role_allowed {
+        return Ok(());
     }
 
     Err(ApiError::Forbidden("Insufficient permissions".to_string()))
@@ -1256,6 +1328,14 @@ pub async fn update_user_permissions(
     .await?;
 
     log::info!("Admin {} updated permissions for user {}", claims.username, user_id);
+
+    let mut cs = ChangeSet::new();
+    cs.created("permissions", &permissions_json);
+    crate::audit::audit_with_changes(
+        &app_state.db_pool, &claims.sub, "update_permissions", "user", &user_id,
+        &format!("Updated permissions for user {}", target_user.username),
+        &cs, &http_request,
+    ).await;
 
     Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
         (),

@@ -14,6 +14,8 @@ use crate::config::load_config;
 use crate::auth::UserRole;
 use crate::auth::get_current_user;
 use crate::handlers::PaginationQuery;
+use crate::handlers::get_dashboard_trends;
+use crate::handlers::get_recent_activity;
 use crate::models::{
     // Equipment
     CreateEquipmentRequest, UpdateEquipmentRequest, 
@@ -63,10 +65,11 @@ mod equipment_handlers;
 mod import_export;
 mod pagination;
 use actix_web::middleware::Compress;
-use config::{Config, load_env_file};
+use config::Config;
 use auth::{AuthService, jwt_middleware};
 
 use auth_handlers::{change_user_password, delete_user, create_user, get_roles};
+use crate::audit::ChangeSet;
 
 // Handlers - only common utilities and specific functions
 use handlers::{
@@ -140,11 +143,28 @@ async fn create_experiment_protected(
     experiment: web::Json<crate::models::experiment::CreateExperimentRequest>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Create, &app_state.db_pool).await?;
+    auth_handlers::check_experiment_permission(&http_request, auth_handlers::ExperimentAction::Create, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     let user_id = claims.sub.clone();
+
+    let mut cs = ChangeSet::new();
+    cs.created("title", &experiment.title);
+    if let Some(ref desc) = experiment.description {
+        cs.created("description", desc);
+    }
+    if let Some(ref et) = experiment.experiment_type {
+        cs.created("experiment_type", et);
+    }
+    if let Some(ref loc) = experiment.location {
+        cs.created("location", loc);
+    }
+
     let response = create_experiment(app_state.clone(), experiment, claims.sub).await?;
-    audit::audit(&app_state.db_pool, &user_id, "create", "experiment", "", "Created experiment", &http_request).await;
+    audit::audit_with_changes(
+        &app_state.db_pool, &user_id, "create", "experiment", "",
+        &format!("Created experiment: {}", cs.to_description()),
+        &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -154,11 +174,38 @@ async fn update_experiment_protected(
     update_data: web::Json<crate::models::experiment::UpdateExperimentRequest>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
+    auth_handlers::check_experiment_permission(&http_request, auth_handlers::ExperimentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     let user_id = claims.sub.clone();
-    let response = update_experiment(app_state.clone(), path, update_data, claims.sub).await?;
-    audit::audit(&app_state.db_pool, &user_id, "edit", "experiment", "", "Updated experiment", &http_request).await;
+    let experiment_id = path.into_inner();
+
+    // Fetch old experiment data for comparison
+    let mut cs = ChangeSet::new();
+    if let Ok(old) = sqlx::query_as::<_, (String, Option<String>, String, Option<String>)>(
+        "SELECT title, description, status, location FROM experiments WHERE id = ?"
+    ).bind(&experiment_id).fetch_one(&app_state.db_pool).await {
+        if let Some(ref new_title) = update_data.title {
+            cs.add("title", &old.0, new_title);
+        }
+        if let Some(ref new_desc) = update_data.description {
+            cs.add_opt("description", &old.1, &Some(new_desc.clone()));
+        }
+        if let Some(ref new_loc) = update_data.location {
+            cs.add_opt("location", &old.3, &Some(new_loc.clone()));
+        }
+    }
+
+    let desc = if cs.has_changes() {
+        format!("Experiment {} updated: {}", experiment_id, cs.to_description())
+    } else {
+        format!("Experiment {} updated", experiment_id)
+    };
+
+    let response = update_experiment(app_state.clone(), web::Path::from(experiment_id.clone()), update_data, claims.sub).await?;
+    audit::audit_with_changes(
+        &app_state.db_pool, &user_id, "edit", "experiment", &experiment_id,
+        &desc, &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -167,12 +214,26 @@ async fn delete_experiment_protected(
     path: web::Path<String>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Delete, &app_state.db_pool).await?;
+    auth_handlers::check_experiment_permission(&http_request, auth_handlers::ExperimentAction::Delete, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     let user_id = claims.sub.clone();
-    // FIXED: pass user_id as third argument
-    let response = delete_experiment(app_state.clone(), path, claims.sub).await?;
-    audit::audit(&app_state.db_pool, &user_id, "delete", "experiment", "", "Deleted experiment", &http_request).await;
+    let experiment_id = path.into_inner();
+
+    // Fetch data before deletion
+    let mut cs = ChangeSet::new();
+    if let Ok(old) = sqlx::query_as::<_, (String, String)>(
+        "SELECT title, status FROM experiments WHERE id = ?"
+    ).bind(&experiment_id).fetch_one(&app_state.db_pool).await {
+        cs.deleted("title", &old.0);
+        cs.deleted("status", &old.1);
+    }
+
+    let response = delete_experiment(app_state.clone(), web::Path::from(experiment_id.clone()), claims.sub).await?;
+    audit::audit_with_changes(
+        &app_state.db_pool, &user_id, "delete", "experiment", &experiment_id,
+        &format!("Deleted experiment: {}", cs.to_description()),
+        &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -182,9 +243,8 @@ async fn add_experiment_reagent_protected(
     reagent: web::Json<experiment_handlers::AddReagentToExperimentRequest>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
+    auth_handlers::check_experiment_permission(&http_request, auth_handlers::ExperimentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
-    // FIXED: pass correct type and user_id
     add_reagent_to_experiment(app_state, path, reagent, claims.sub).await
 }
 
@@ -193,7 +253,7 @@ async fn remove_experiment_reagent_protected(
     path: web::Path<(String, String)>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
+    auth_handlers::check_experiment_permission(&http_request, auth_handlers::ExperimentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     remove_reagent_from_experiment(app_state, path, claims.sub).await
 }
@@ -203,7 +263,7 @@ async fn start_experiment_protected(
     path: web::Path<String>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
+    auth_handlers::check_experiment_permission(&http_request, auth_handlers::ExperimentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     start_experiment(app_state, path, claims.sub).await
 }
@@ -213,7 +273,7 @@ async fn complete_experiment_protected(
     path: web::Path<String>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
+    auth_handlers::check_experiment_permission(&http_request, auth_handlers::ExperimentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     complete_experiment(app_state, path, claims.sub).await
 }
@@ -223,7 +283,7 @@ async fn cancel_experiment_protected(
     path: web::Path<String>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
+    auth_handlers::check_experiment_permission(&http_request, auth_handlers::ExperimentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     cancel_experiment(app_state, path, claims.sub).await
 }
@@ -233,7 +293,7 @@ async fn consume_experiment_reagent_protected(
     path: web::Path<(String, String)>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
+    auth_handlers::check_experiment_permission(&http_request, auth_handlers::ExperimentAction::Edit, &app_state.db_pool).await?;
     let claims = crate::auth::get_current_user(&http_request)?;
     consume_experiment_reagent(app_state, path, claims.sub).await
 }
@@ -254,8 +314,22 @@ async fn create_reagent_protected(
     auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Create, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     let user_id = claims.sub.clone();
+
+    let mut cs = ChangeSet::new();
+    cs.created("name", &reagent.name);
+    if let Some(ref v) = reagent.formula { cs.created("formula", v); }
+    if let Some(ref v) = reagent.cas_number { cs.created("cas_number", v); }
+    if let Some(ref v) = reagent.manufacturer { cs.created("manufacturer", v); }
+    if let Some(ref v) = reagent.physical_state { cs.created("physical_state", v); }
+    if let Some(ref v) = reagent.hazard_pictograms { cs.created("hazard_pictograms", v); }
+    if let Some(ref v) = reagent.storage_conditions { cs.created("storage_conditions", v); }
+
     let response = reagent_handlers::create_reagent(app_state.clone(), reagent, claims.sub).await?;
-    audit::audit(&app_state.db_pool, &user_id, "create", "reagent", "", "Created reagent", &http_request).await;
+    audit::audit_with_changes(
+        &app_state.db_pool, &user_id, "create", "reagent", "",
+        &format!("Created reagent: {}", cs.to_description()),
+        &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -268,8 +342,45 @@ async fn update_reagent_protected(
     auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Edit, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     let user_id = claims.sub.clone();
-    let response = reagent_handlers::update_reagent(app_state.clone(), path, update_data, claims.sub).await?;
-    audit::audit(&app_state.db_pool, &user_id, "edit", "reagent", "", "Updated reagent", &http_request).await;
+    let reagent_id = path.into_inner();
+
+    // Fetch old reagent for comparison
+    let mut cs = ChangeSet::new();
+    let mut reagent_name = reagent_id.clone();
+
+    if let Ok(old) = sqlx::query_as::<_, (
+        String, Option<String>, Option<f64>, Option<String>, Option<String>,
+        Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, String
+    )>(
+        "SELECT name, formula, molecular_weight, physical_state, cas_number, \
+         manufacturer, description, storage_conditions, appearance, hazard_pictograms, status \
+         FROM reagents WHERE id = ?"
+    ).bind(&reagent_id).fetch_one(&app_state.db_pool).await {
+        reagent_name = old.0.clone();
+        if let Some(ref new_val) = update_data.name { cs.add("name", &old.0, new_val); }
+        if let Some(ref new_val) = update_data.formula { cs.add_opt("formula", &old.1, &Some(new_val.clone())); }
+        if let Some(new_val) = update_data.molecular_weight { cs.add_opt_f64("molecular_weight", old.2, Some(new_val)); }
+        if let Some(ref new_val) = update_data.physical_state { cs.add_opt("physical_state", &old.3, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.cas_number { cs.add_opt("cas_number", &old.4, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.manufacturer { cs.add_opt("manufacturer", &old.5, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.description { cs.add_opt("description", &old.6, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.storage_conditions { cs.add_opt("storage_conditions", &old.7, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.appearance { cs.add_opt("appearance", &old.8, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.hazard_pictograms { cs.add_opt("hazard_pictograms", &old.9, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.status { cs.add("status", &old.10, new_val); }
+    }
+
+    let desc = if cs.has_changes() {
+        format!("Reagent '{}' updated: {}", reagent_name, cs.to_description())
+    } else {
+        format!("Reagent '{}' updated", reagent_name)
+    };
+
+    let response = reagent_handlers::update_reagent(app_state.clone(), web::Path::from(reagent_id.clone()), update_data, claims.sub).await?;
+    audit::audit_with_changes(
+        &app_state.db_pool, &user_id, "edit", "reagent", &reagent_id,
+        &desc, &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -280,8 +391,25 @@ async fn delete_reagent_protected(
 ) -> error::ApiResult<HttpResponse> {
     auth_handlers::check_reagent_permission_async(&http_request, auth_handlers::ReagentAction::Delete, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
-    let response = reagent_handlers::delete_reagent(app_state.clone(), path).await?;
-    audit::audit(&app_state.db_pool, &claims.sub, "delete", "reagent", "", "Deleted reagent", &http_request).await;
+    let reagent_id = path.into_inner();
+
+    // Fetch info before deletion
+    let mut cs = ChangeSet::new();
+    if let Ok(old) = sqlx::query_as::<_, (String, Option<String>, Option<String>, String)>(
+        "SELECT name, cas_number, manufacturer, status FROM reagents WHERE id = ?"
+    ).bind(&reagent_id).fetch_one(&app_state.db_pool).await {
+        cs.deleted("name", &old.0);
+        if let Some(ref cas) = old.1 { cs.deleted("cas_number", cas); }
+        if let Some(ref mfr) = old.2 { cs.deleted("manufacturer", mfr); }
+        cs.deleted("status", &old.3);
+    }
+
+    let response = reagent_handlers::delete_reagent(app_state.clone(), web::Path::from(reagent_id.clone())).await?;
+    audit::audit_with_changes(
+        &app_state.db_pool, &claims.sub, "delete", "reagent", &reagent_id,
+        &format!("Deleted reagent: {}", cs.to_description()),
+        &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -296,8 +424,30 @@ async fn create_batch_protected(
     auth_handlers::check_batch_permission_async(&http_request, auth_handlers::BatchAction::Create, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     let user_id = claims.sub.clone();
-    let response = batch_handlers::create_batch(app_state.clone(), path, batch, claims.sub).await?;
-    audit::audit(&app_state.db_pool, &user_id, "create", "batch", "", "Created batch", &http_request).await;
+    let reagent_id = path.into_inner();
+
+    // Fetch reagent name
+    let reagent_name = sqlx::query_as::<_, (String,)>(
+        "SELECT name FROM reagents WHERE id = ?"
+    ).bind(&reagent_id).fetch_optional(&app_state.db_pool).await
+        .ok().flatten().map(|r| r.0).unwrap_or_else(|| reagent_id.clone());
+
+    let mut cs = ChangeSet::new();
+    cs.created("reagent", &reagent_name);
+    cs.created("batch_number", &batch.batch_number);
+    cs.created("quantity", &format!("{} {}", batch.quantity, batch.unit));
+    if let Some(ref v) = batch.lot_number { cs.created("lot_number", v); }
+    if let Some(ref v) = batch.supplier { cs.created("supplier", v); }
+    if let Some(ref v) = batch.location { cs.created("location", v); }
+    if let Some(ref v) = batch.cat_number { cs.created("cat_number", v); }
+    if let Some(ref v) = batch.expiry_date { cs.created("expiry_date", &v.to_string()); }
+
+    let response = batch_handlers::create_batch(app_state.clone(), web::Path::from(reagent_id.clone()), batch, claims.sub).await?;
+    audit::audit_with_changes(
+        &app_state.db_pool, &user_id, "create", "batch", "",
+        &format!("Created batch for '{}': {}", reagent_name, cs.to_description()),
+        &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -310,8 +460,52 @@ async fn update_batch_protected(
     auth_handlers::check_batch_permission_async(&http_request, auth_handlers::BatchAction::Edit, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     let user_id = claims.sub.clone();
-    let response = batch_handlers::update_batch(app_state.clone(), path, update_data, claims.sub).await?;
-    audit::audit(&app_state.db_pool, &user_id, "edit", "batch", "", "Updated batch", &http_request).await;
+    let (reagent_id, batch_id) = path.into_inner();
+
+    // Fetch old batch data for comparison
+    let mut cs = ChangeSet::new();
+    let mut batch_label = batch_id.clone();
+
+    if let Ok(old) = sqlx::query_as::<_, (
+        String, f64, String, String, Option<String>, Option<String>,
+        Option<String>, Option<String>, Option<String>, Option<String>, Option<String>
+    )>(
+        "SELECT batch_number, quantity, unit, status, \
+         lot_number, location, supplier, manufacturer, expiry_date, notes, cat_number \
+         FROM batches WHERE id = ? AND reagent_id = ?"
+    ).bind(&batch_id).bind(&reagent_id).fetch_one(&app_state.db_pool).await {
+        batch_label = old.0.clone();
+
+        if let Some(ref new_val) = update_data.batch_number { cs.add("batch_number", &old.0, new_val); }
+        if let Some(new_val) = update_data.quantity { cs.add_f64("quantity", old.1, new_val); }
+        if let Some(ref new_val) = update_data.unit { cs.add("unit", &old.2, new_val); }
+        if let Some(ref new_val) = update_data.status { cs.add("status", &old.3, new_val); }
+        if let Some(ref new_val) = update_data.lot_number { cs.add_opt("lot_number", &old.4, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.location { cs.add_opt("location", &old.5, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.supplier { cs.add_opt("supplier", &old.6, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.manufacturer { cs.add_opt("manufacturer", &old.7, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.expiry_date { cs.add_opt("expiry_date", &old.8, &Some(new_val.to_string())); }
+        if let Some(ref new_val) = update_data.notes { cs.add_opt("notes", &old.9, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.cat_number { cs.add_opt("cat_number", &old.10, &Some(new_val.clone())); }
+    }
+
+    // Fetch reagent name for description
+    let reagent_name = sqlx::query_as::<_, (String,)>(
+        "SELECT name FROM reagents WHERE id = ?"
+    ).bind(&reagent_id).fetch_optional(&app_state.db_pool).await
+        .ok().flatten().map(|r| r.0).unwrap_or_else(|| reagent_id.clone());
+
+    let desc = if cs.has_changes() {
+        format!("Batch {} of reagent '{}' updated: {}", batch_label, reagent_name, cs.to_description())
+    } else {
+        format!("Batch {} of reagent '{}' updated", batch_label, reagent_name)
+    };
+
+    let response = batch_handlers::update_batch(app_state.clone(), web::Path::from((reagent_id.clone(), batch_id.clone())), update_data, claims.sub).await?;
+    audit::audit_with_changes(
+        &app_state.db_pool, &user_id, "edit", "batch", &batch_id,
+        &desc, &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -323,9 +517,31 @@ async fn delete_batch_protected(
     auth_handlers::check_batch_permission_async(&http_request, auth_handlers::BatchAction::Delete, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     let user_id = claims.sub.clone();
+    let (reagent_id, batch_id) = path.into_inner();
+
+    // Fetch info before deletion
+    let mut cs = ChangeSet::new();
+    let reagent_name = sqlx::query_as::<_, (String,)>(
+        "SELECT name FROM reagents WHERE id = ?"
+    ).bind(&reagent_id).fetch_optional(&app_state.db_pool).await
+        .ok().flatten().map(|r| r.0).unwrap_or_else(|| reagent_id.clone());
+
+    if let Ok(old) = sqlx::query_as::<_, (String, f64, String, String, Option<String>)>(
+        "SELECT batch_number, quantity, unit, status, lot_number FROM batches WHERE id = ? AND reagent_id = ?"
+    ).bind(&batch_id).bind(&reagent_id).fetch_one(&app_state.db_pool).await {
+        cs.deleted("batch_number", &old.0);
+        cs.deleted("quantity", &format!("{} {}", old.1, old.2));
+        cs.deleted("status", &old.3);
+        if let Some(ref lot) = old.4 { cs.deleted("lot_number", lot); }
+    }
+
     // FIXED: pass user_id as third argument
-    let response = batch_handlers::delete_batch(app_state.clone(), path, claims.sub).await?;
-    audit::audit(&app_state.db_pool, &user_id, "delete", "batch", "", "Deleted batch", &http_request).await;
+    let response = batch_handlers::delete_batch(app_state.clone(), web::Path::from((reagent_id.clone(), batch_id.clone())), claims.sub).await?;
+    audit::audit_with_changes(
+        &app_state.db_pool, &user_id, "delete", "batch", &batch_id,
+        &format!("Deleted batch of reagent '{}': {}", reagent_name, cs.to_description()),
+        &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -339,8 +555,23 @@ async fn create_equipment_protected(
     auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Create, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     let user_id = claims.sub.clone();
+
+    let mut cs = ChangeSet::new();
+    cs.created("name", &equipment.name);
+    cs.created("type", &equipment.type_);
+    cs.created("quantity", &format!("{}", equipment.quantity));
+    if let Some(ref v) = equipment.location { cs.created("location", v); }
+    if let Some(ref v) = equipment.serial_number { cs.created("serial_number", v); }
+    if let Some(ref v) = equipment.manufacturer { cs.created("manufacturer", v); }
+    if let Some(ref v) = equipment.model { cs.created("model", v); }
+ 
+
     let response = equipment_handlers::create_equipment(app_state.clone(), equipment, claims.sub).await?;
-    audit::audit(&app_state.db_pool, &user_id, "create", "equipment", "", "Created equipment", &http_request).await;
+    audit::audit_with_changes(
+        &app_state.db_pool, &user_id, "create", "equipment", "",
+        &format!("Created equipment: {}", cs.to_description()),
+        &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -353,8 +584,40 @@ async fn update_equipment_protected(
     auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     let user_id = claims.sub.clone();
-    let response = equipment_handlers::update_equipment(app_state.clone(), path, update_data, claims.sub).await?;
-    audit::audit(&app_state.db_pool, &user_id, "edit", "equipment", "", "Updated equipment", &http_request).await;
+    let equipment_id = path.into_inner();
+
+    let mut cs = ChangeSet::new();
+    let mut equip_name = equipment_id.clone();
+
+    if let Ok(old) = sqlx::query_as::<_, (
+        String, i64, String, Option<String>, Option<String>,
+        Option<String>, Option<String>, Option<String>
+    )>(
+        "SELECT name, quantity, status, location, serial_number, \
+         manufacturer, model, description FROM equipment WHERE id = ?"
+    ).bind(&equipment_id).fetch_one(&app_state.db_pool).await {
+        equip_name = old.0.clone();
+        if let Some(ref new_val) = update_data.name { cs.add("name", &old.0, new_val); }
+        if let Some(new_val) = update_data.quantity { cs.add_i64("quantity", old.1, new_val as i64); }
+        if let Some(ref new_val) = update_data.status { cs.add("status", &old.2, new_val); }
+        if let Some(ref new_val) = update_data.location { cs.add_opt("location", &old.3, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.serial_number { cs.add_opt("serial_number", &old.4, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.manufacturer { cs.add_opt("manufacturer", &old.5, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.model { cs.add_opt("model", &old.6, &Some(new_val.clone())); }
+        if let Some(ref new_val) = update_data.description { cs.add_opt("description", &old.7, &Some(new_val.clone())); }
+    }
+
+    let desc = if cs.has_changes() {
+        format!("Equipment '{}' updated: {}", equip_name, cs.to_description())
+    } else {
+        format!("Equipment '{}' updated", equip_name)
+    };
+
+    let response = equipment_handlers::update_equipment(app_state.clone(), web::Path::from(equipment_id.clone()), update_data, claims.sub).await?;
+    audit::audit_with_changes(
+        &app_state.db_pool, &user_id, "edit", "equipment", &equipment_id,
+        &desc, &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -365,8 +628,23 @@ async fn delete_equipment_protected(
 ) -> ApiResult<HttpResponse> {
     auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
-    let response = equipment_handlers::delete_equipment(app_state.clone(), path).await?;
-    audit::audit(&app_state.db_pool, &claims.sub, "delete", "equipment", "", "Deleted equipment", &http_request).await;
+    let equipment_id = path.into_inner();
+
+    let mut cs = ChangeSet::new();
+    if let Ok(old) = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT name, type_, status FROM equipment WHERE id = ?"
+    ).bind(&equipment_id).fetch_one(&app_state.db_pool).await {
+        cs.deleted("name", &old.0);
+        cs.deleted("type", &old.1);
+        cs.deleted("status", &old.2);
+    }
+
+    let response = equipment_handlers::delete_equipment(app_state.clone(), web::Path::from(equipment_id.clone())).await?;
+    audit::audit_with_changes(
+        &app_state.db_pool, &claims.sub, "delete", "equipment", &equipment_id,
+        &format!("Deleted equipment: {}", cs.to_description()),
+        &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -508,11 +786,21 @@ async fn create_room_protected(
     room: web::Json<crate::models::room::CreateRoomRequest>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Create, &app_state.db_pool).await?;
+    auth_handlers::check_room_permission(&http_request, auth_handlers::RoomAction::Create, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     let user_id = claims.sub.clone();
+
+    let mut cs = ChangeSet::new();
+    cs.created("name", &room.name);
+    if let Some(ref v) = room.description { cs.created("description", v); }
+    if let Some(v) = room.capacity { cs.created("capacity", &format!("{}", v)); }
+
     let response = room_handlers::create_room(app_state.clone(), room, claims.sub).await?;
-    audit::audit(&app_state.db_pool, &user_id, "create", "room", "", "Created room", &http_request).await;
+    audit::audit_with_changes(
+        &app_state.db_pool, &user_id, "create", "room", "",
+        &format!("Created room: {}", cs.to_description()),
+        &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -522,11 +810,36 @@ async fn update_room_protected(
     update_data: web::Json<crate::models::room::UpdateRoomRequest>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Edit, &app_state.db_pool).await?;
+    auth_handlers::check_room_permission(&http_request, auth_handlers::RoomAction::Edit, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
     let user_id = claims.sub.clone();
-    let response = room_handlers::update_room(app_state.clone(), path, update_data, claims.sub).await?;
-    audit::audit(&app_state.db_pool, &user_id, "edit", "room", "", "Updated room", &http_request).await;
+    let room_id = path.into_inner();
+
+    let mut cs = ChangeSet::new();
+    let mut room_name = room_id.clone();
+
+    if let Ok(old) = sqlx::query_as::<_, (String, Option<String>, Option<i64>, String)>(
+        "SELECT name, description, capacity, status FROM rooms WHERE id = ?"
+    ).bind(&room_id).fetch_one(&app_state.db_pool).await {
+        room_name = old.0.clone();
+        if let Some(ref new_val) = update_data.name { cs.add("name", &old.0, new_val); }
+        if let Some(ref new_val) = update_data.description { cs.add_opt("description", &old.1, &Some(new_val.clone())); }
+        if let Some(new_val) = update_data.capacity {
+            cs.add_i64("capacity", old.2.unwrap_or(0), new_val as i64);
+        }
+    }
+
+    let desc = if cs.has_changes() {
+        format!("Room '{}' updated: {}", room_name, cs.to_description())
+    } else {
+        format!("Room '{}' updated", room_name)
+    };
+
+    let response = room_handlers::update_room(app_state.clone(), web::Path::from(room_id.clone()), update_data, claims.sub).await?;
+    audit::audit_with_changes(
+        &app_state.db_pool, &user_id, "edit", "room", &room_id,
+        &desc, &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -535,10 +848,24 @@ async fn delete_room_protected(
     path: web::Path<String>,
     http_request: HttpRequest,
 ) -> ApiResult<HttpResponse> {
-    auth_handlers::check_equipment_permission(&http_request, auth_handlers::EquipmentAction::Delete, &app_state.db_pool).await?;
+    auth_handlers::check_room_permission(&http_request, auth_handlers::RoomAction::Delete, &app_state.db_pool).await?;
     let claims = auth::get_current_user(&http_request)?;
-    let response = room_handlers::delete_room(app_state.clone(), path).await?;
-    audit::audit(&app_state.db_pool, &claims.sub, "delete", "room", "", "Deleted room", &http_request).await;
+    let room_id = path.into_inner();
+
+    let mut cs = ChangeSet::new();
+    if let Ok(old) = sqlx::query_as::<_, (String, String)>(
+        "SELECT name, status FROM rooms WHERE id = ?"
+    ).bind(&room_id).fetch_one(&app_state.db_pool).await {
+        cs.deleted("name", &old.0);
+        cs.deleted("status", &old.1);
+    }
+
+    let response = room_handlers::delete_room(app_state.clone(), web::Path::from(room_id.clone())).await?;
+    audit::audit_with_changes(
+        &app_state.db_pool, &claims.sub, "delete", "room", &room_id,
+        &format!("Deleted room: {}", cs.to_description()),
+        &cs, &http_request,
+    ).await;
     Ok(response)
 }
 
@@ -569,11 +896,7 @@ async fn rebuild_cache_protected(
 
 #[actix_web::main]
 async fn main() -> anyhow::Result<()> {
-    // Load .env file
-    let env_file = env::var("ENV_FILE").unwrap_or_else(|_| ".env".to_string());
-    load_env_file()?;
-
-    // Load configuration
+    // Load configuration (this calls load_env_file internally)
     let config = load_config()?;
 
     // Setup logging
@@ -593,6 +916,9 @@ async fn main() -> anyhow::Result<()> {
     // Run migrations
     db::run_migrations(&pool).await?;
 
+    // Initialize JWT rotation table
+    jwt_rotation::init_rotation_table(&pool).await?;
+
     // Create auth service
     let auth_service = Arc::new(AuthService::new(&config.auth.jwt_secret));
 
@@ -609,6 +935,13 @@ async fn main() -> anyhow::Result<()> {
     let pool_clone = pool.clone();
     tokio::spawn(async move {
         start_maintenance_tasks(pool_clone).await;
+    });
+
+    // Start JWT rotation background task
+    let rotation_pool = pool.clone();
+    let env_file = env::var("ENV_FILE").unwrap_or_else(|_| ".env".to_string());
+    tokio::spawn(async move {
+        jwt_rotation::start_rotation_task(rotation_pool, env_file).await;
     });
 
     let bind_address = format!("{}:{}", config.server.host, config.server.port);
@@ -689,6 +1022,8 @@ async fn main() -> anyhow::Result<()> {
                     .service(
                         web::scope("/dashboard")
                             .route("/stats", web::get().to(get_dashboard_stats))
+                            .route("/recent-activity", web::get().to(get_recent_activity))
+                            .route("/trends", web::get().to(get_dashboard_trends))
                     )
                     // Admin (cache management)
                     .service(

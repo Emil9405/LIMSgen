@@ -82,7 +82,8 @@ pub struct LoggingConfig {
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            jwt_secret: "dummy_32_chars_for_tests!!".to_string(), 
+            // Auto-generate a secure secret if none provided via .env
+            jwt_secret: generate_jwt_secret(),
             token_expiration_hours: 24,
             bcrypt_cost: 10,
             max_login_attempts: 5,
@@ -237,10 +238,63 @@ pub fn load_config() -> Result<Config> {
 
     override_with_env(&mut config)?;
 
+    // If JWT secret is still too short (no .env, no env var), auto-generate and persist
+    if config.auth.jwt_secret.len() < 32 {
+        log::warn!("JWT_SECRET too short ({}), auto-generating secure secret...", config.auth.jwt_secret.len());
+        let new_secret = generate_jwt_secret();
+        
+        // Try to persist to .env so next restart uses the same secret
+        if let Err(e) = persist_jwt_secret(&new_secret) {
+            log::warn!("Could not persist JWT_SECRET to .env: {}. Secret will be regenerated on restart.", e);
+        } else {
+            log::info!("✓ Generated and saved new JWT_SECRET to .env");
+        }
+        
+        config.auth.jwt_secret = new_secret;
+    }
+
     config.validate()
         .context("Configuration validation failed")?;
 
     Ok(config)
+}
+
+/// Persists JWT secret to the .env file
+fn persist_jwt_secret(secret: &str) -> Result<()> {
+    let env_path = env::var("ENV_FILE").unwrap_or_else(|_| {
+        // Find existing .env or use CWD
+        let candidates = get_env_candidate_paths();
+        for candidate in &candidates {
+            if Path::new(candidate).exists() {
+                return candidate.clone();
+            }
+        }
+        ".env".to_string()
+    });
+
+    let path = Path::new(&env_path);
+    let mut content = fs::read_to_string(path).unwrap_or_default();
+
+    if content.contains("JWT_SECRET=") {
+        // Replace existing
+        let lines: Vec<String> = content.lines().map(|line| {
+            if line.trim().starts_with("JWT_SECRET=") {
+                format!("JWT_SECRET={}", secret)
+            } else {
+                line.to_string()
+            }
+        }).collect();
+        content = lines.join("\n") + "\n";
+    } else {
+        // Append
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(&format!("JWT_SECRET={}\n", secret));
+    }
+
+    fs::write(path, content)?;
+    Ok(())
 }
 
 fn override_with_env(config: &mut Config) -> Result<()> {
@@ -310,7 +364,6 @@ fn override_with_env(config: &mut Config) -> Result<()> {
 
 impl Config {
     pub fn validate(&self) -> Result<()> {
-        println!("DEBUG: JWT len = {}", self.auth.jwt_secret.len()); 
         if self.auth.jwt_secret.len() < 32 {
             return Err(anyhow::anyhow!(
                 "JWT_SECRET must be at least 32 characters long (current: {})",
@@ -368,13 +421,79 @@ fn is_root_user() -> bool {
 }
 
 pub fn load_env_file() -> Result<()> {
+    // 1. Explicit ENV_FILE variable — highest priority
     if let Ok(env_file) = env::var("ENV_FILE") {
-        dotenvy::from_filename(&env_file)
-            .with_context(|| format!("Failed to load environment file: {}", env_file))?;
-    } else if Path::new(".env").exists() {
-        dotenvy::dotenv().context("Failed to load .env file")?;
+        let path = Path::new(&env_file);
+        if path.exists() {
+            dotenvy::from_filename(&env_file)
+                .with_context(|| format!("Failed to load environment file: {}", env_file))?;
+            log::info!("✓ Loaded env from ENV_FILE: {}", env_file);
+            return Ok(());
+        } else {
+            log::warn!("ENV_FILE set to '{}' but file not found", env_file);
+        }
     }
+
+    // 2. Try multiple common locations for .env
+    let candidate_paths = get_env_candidate_paths();
+    
+    for candidate in &candidate_paths {
+        let path = Path::new(candidate);
+        if path.exists() {
+            match dotenvy::from_filename(candidate) {
+                Ok(_) => {
+                    log::info!("✓ Loaded env from: {}", candidate);
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::warn!("Found .env at '{}' but failed to parse: {}", candidate, e);
+                }
+            }
+        }
+    }
+
+    // 3. No .env found — not an error, we'll use defaults + auto-generated secrets
+    log::warn!("No .env file found (searched: {:?}). Using defaults with auto-generated JWT secret.", candidate_paths);
     Ok(())
+}
+
+/// Returns a list of candidate paths to search for .env file
+fn get_env_candidate_paths() -> Vec<String> {
+    let mut paths = vec![".env".to_string()];
+
+    // Next to the executable
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            paths.push(exe_dir.join(".env").to_string_lossy().to_string());
+        }
+    }
+
+    // CARGO_MANIFEST_DIR (available during `cargo run`)
+    if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+        paths.push(Path::new(&manifest_dir).join(".env").to_string_lossy().to_string());
+    }
+
+    // Parent of CWD (useful when running from target/debug/)
+    if let Ok(cwd) = env::current_dir() {
+        if let Some(parent) = cwd.parent() {
+            paths.push(parent.join(".env").to_string_lossy().to_string());
+        }
+        // Also try two levels up (target/debug/ → project root)
+        if let Some(grandparent) = cwd.parent().and_then(|p| p.parent()) {
+            paths.push(grandparent.join(".env").to_string_lossy().to_string());
+        }
+    }
+
+    // Deduplicate while preserving order
+    let mut seen = std::collections::HashSet::new();
+    paths.retain(|p| {
+        let canonical = fs::canonicalize(p)
+            .map(|c| c.to_string_lossy().to_string())
+            .unwrap_or_else(|_| p.clone());
+        seen.insert(canonical)
+    });
+
+    paths
 }
 
 

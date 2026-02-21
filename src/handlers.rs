@@ -10,6 +10,7 @@ use crate::AppState;
 use crate::models::{Reagent, Batch};
 use crate::error::{ApiError, ApiResult, validate_quantity};
 use crate::auth::get_current_user;
+use crate::audit::ChangeSet;
 use std::env;
 
 // ==================== COMMON STRUCTURES ====================
@@ -196,7 +197,7 @@ pub async fn use_reagent(
     let claims = get_current_user(&http_request)?;
     validate_quantity(request.quantity_used)?;
 
-    let _reagent: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ?")
+    let reagent: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ?")
         .bind(&reagent_id)
         .fetch_one(&app_state.db_pool)
         .await
@@ -249,15 +250,27 @@ pub async fn use_reagent(
         .await?;
 
     tx.commit().await?;
-    crate::audit::audit(
-    &app_state.db_pool, &claims.sub, "use_reagent", "batch", &batch_id,
-    &format!("Used {} {} from batch {}", request.quantity_used, batch.unit, batch_id),
-    &http_request
-).await;
+
+    // Detailed audit with reagent name, batch number, and quantity change
+    let mut cs = ChangeSet::new();
+    cs.add_f64("quantity", batch.quantity, new_quantity.max(0.0));
+    if batch.status != new_status {
+        cs.add("status", &batch.status, new_status);
+    }
+
+    crate::audit::audit_with_changes(
+        &app_state.db_pool, &claims.sub, "use_reagent", "batch", &batch_id,
+        &format!(
+            "Used {} {} from reagent \"{}\" batch {} (remaining: {} {})",
+            request.quantity_used, batch.unit, reagent.name, batch.batch_number,
+            new_quantity.max(0.0), batch.unit
+        ),
+        &cs, &http_request,
+    ).await;
 
     log::info!(
-        "User {} used {} {} from batch {} (reagent {})",
-        claims.username, request.quantity_used, batch.unit, batch_id, reagent_id
+        "User {} used {} {} from reagent \"{}\" batch {} (reagent_id: {}, batch_id: {})",
+        claims.username, request.quantity_used, batch.unit, reagent.name, batch.batch_number, reagent_id, batch_id
     );
 
     Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
@@ -345,6 +358,9 @@ pub async fn get_dashboard_stats(
         total_batches: i64,
         low_stock: i64,
         expiring_soon: i64,
+        total_equipment: i64,
+        equipment_alerts: i64,
+        active_experiments: i64,
     }
 
     let total_reagents: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM reagents WHERE status = 'active'")
@@ -365,16 +381,156 @@ pub async fn get_dashboard_stats(
         .fetch_one(&app_state.db_pool)
         .await?;
 
+    // Equipment: total count
+    let total_equipment: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM equipment WHERE status != 'retired'"
+    )
+        .fetch_one(&app_state.db_pool)
+        .await
+        .unwrap_or((0,));
+
+    // Equipment alerts: maintenance + damaged + calibration
+    let equipment_alerts: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM equipment WHERE status IN ('maintenance', 'damaged', 'calibration')"
+    )
+        .fetch_one(&app_state.db_pool)
+        .await
+        .unwrap_or((0,));
+
+    // Active experiments: in_progress + scheduled
+    let active_experiments: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM experiments WHERE status IN ('in_progress', 'scheduled')"
+    )
+        .fetch_one(&app_state.db_pool)
+        .await
+        .unwrap_or((0,));
+
     let stats = DashboardStats {
         total_reagents: total_reagents.0,
         total_batches: total_batches.0,
         low_stock: low_stock.0,
         expiring_soon: expiring_soon.0,
+        total_equipment: total_equipment.0,
+        equipment_alerts: equipment_alerts.0,
+        active_experiments: active_experiments.0,
     };
 
     Ok(HttpResponse::Ok().json(ApiResponse::success(stats)))
 }
 
+// ==================== RECENT ACTIVITY (from audit_logs) ====================
+
+#[derive(Debug, Serialize)]
+pub struct ActivityItem {
+    pub id: String,
+    pub action: String,
+    pub entity_type: String,
+    pub entity_id: Option<String>,
+    pub description: Option<String>,
+    pub username: Option<String>,
+    pub created_at: String,
+}
+
+pub async fn get_recent_activity(
+    app_state: web::Data<Arc<AppState>>,
+) -> ApiResult<HttpResponse> {
+    let limit = 15i64;
+
+    let rows: Vec<(String, String, String, Option<String>, Option<String>, Option<String>, String)> =
+        sqlx::query_as(
+            r#"SELECT
+                a.id, a.action, a.entity_type, a.entity_id,
+                a.description, u.username, a.created_at
+            FROM audit_logs a
+            LEFT JOIN users u ON a.user_id = u.id
+            ORDER BY a.created_at DESC
+            LIMIT ?"#
+        )
+        .bind(limit)
+        .fetch_all(&app_state.db_pool)
+        .await?;
+
+    let activities: Vec<ActivityItem> = rows.into_iter()
+        .map(|(id, action, entity_type, entity_id, description, username, created_at)| {
+            ActivityItem { id, action, entity_type, entity_id, description, username, created_at }
+        })
+        .collect();
+
+    Ok(HttpResponse::Ok().json(ApiResponse::success(activities)))
+}
+
+// ==================== USAGE TRENDS (for charts) ====================
+
+#[derive(Debug, Serialize)]
+pub struct UsageTrendPoint {
+    pub date: String,
+    pub usage_count: i64,
+    pub total_quantity: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExpiringWeekPoint {
+    pub week_label: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DashboardTrends {
+    pub usage_by_day: Vec<UsageTrendPoint>,
+    pub expiring_by_week: Vec<ExpiringWeekPoint>,
+}
+
+pub async fn get_dashboard_trends(
+    app_state: web::Data<Arc<AppState>>,
+) -> ApiResult<HttpResponse> {
+    // Usage per day (last 30 days)
+    let usage_rows: Vec<(String, i64, f64)> = sqlx::query_as(
+        r#"SELECT
+            DATE(created_at) as day,
+            COUNT(*) as usage_count,
+            COALESCE(SUM(quantity_used), 0) as total_quantity
+        FROM usage_logs
+        WHERE created_at >= datetime('now', '-30 days')
+        GROUP BY DATE(created_at)
+        ORDER BY day ASC"#
+    )
+    .fetch_all(&app_state.db_pool)
+    .await?;
+
+    let usage_by_day: Vec<UsageTrendPoint> = usage_rows.into_iter()
+        .map(|(date, usage_count, total_quantity)| UsageTrendPoint { date, usage_count, total_quantity })
+        .collect();
+
+    // Batches expiring in next 4 weeks
+    let expiring_rows: Vec<(String, i64)> = sqlx::query_as(
+        r#"SELECT
+            CASE
+                WHEN expiry_date <= datetime('now', '+7 days') THEN 'This week'
+                WHEN expiry_date <= datetime('now', '+14 days') THEN 'Week 2'
+                WHEN expiry_date <= datetime('now', '+21 days') THEN 'Week 3'
+                WHEN expiry_date <= datetime('now', '+28 days') THEN 'Week 4'
+            END as week_label,
+            COUNT(*) as cnt
+        FROM batches
+        WHERE expiry_date IS NOT NULL
+          AND expiry_date <= datetime('now', '+28 days')
+          AND expiry_date > datetime('now')
+          AND status = 'available'
+        GROUP BY week_label
+        ORDER BY CASE week_label
+            WHEN 'This week' THEN 1 WHEN 'Week 2' THEN 2
+            WHEN 'Week 3' THEN 3 WHEN 'Week 4' THEN 4
+        END"#
+    )
+    .fetch_all(&app_state.db_pool)
+    .await?;
+
+    let expiring_by_week: Vec<ExpiringWeekPoint> = expiring_rows.into_iter()
+        .map(|(week_label, count)| ExpiringWeekPoint { week_label, count })
+        .collect();
+
+    Ok(HttpResponse::Ok().json(ApiResponse::success(DashboardTrends { usage_by_day, expiring_by_week })))
+}
 // ==================== JWT ROTATION ====================
 
 pub async fn get_jwt_rotation_status(
