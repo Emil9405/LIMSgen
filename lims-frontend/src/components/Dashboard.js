@@ -259,14 +259,47 @@ const Dashboard = ({ user, showToast, onNavigate }) => {
         api.getDashboardTrends().catch(() => null),
       ]);
 
+      // Equipment & experiments: use stats if backend is updated, otherwise fetch separately
+      let equipmentAlerts = statsData?.equipment_alerts;
+      let totalEquipment = statsData?.total_equipment;
+      let activeExperiments = statsData?.active_experiments;
+
+      // Fallback: if backend doesn't return new fields, fetch separately
+      if (equipmentAlerts == null || totalEquipment == null) {
+        try {
+          const eqData = await api.getEquipment({ page: 1, per_page: 1000 });
+          const items = eqData?.data || (Array.isArray(eqData) ? eqData : []);
+          totalEquipment = totalEquipment ?? items.filter(e => e.status !== 'retired').length;
+          equipmentAlerts = equipmentAlerts ?? items.filter(e =>
+            ['maintenance', 'damaged', 'calibration'].includes(e.status)
+          ).length;
+        } catch {
+          totalEquipment = totalEquipment ?? 0;
+          equipmentAlerts = equipmentAlerts ?? 0;
+        }
+      }
+
+      if (activeExperiments == null) {
+        try {
+          const expStats = await api.getExperimentsStats();
+          activeExperiments = (expStats?.in_progress ?? 0) + (expStats?.planned ?? expStats?.scheduled ?? 0);
+        } catch {
+          activeExperiments = 0;
+        }
+      }
+
+      // Normalize array data from separate endpoints (more reliable queries)
+      const expiringArr = Array.isArray(expiringData) ? expiringData : (expiringData?.data || []);
+      const lowStockArr = Array.isArray(lowStockData) ? lowStockData : (lowStockData?.data || []);
+
       setStats({
         total_reagents: statsData?.total_reagents ?? reagentsData?.total ?? 0,
         total_batches: statsData?.total_batches ?? batchesData?.total ?? 0,
-        low_stock: statsData?.low_stock ?? lowStockData?.length ?? 0,
-        expiring_soon: statsData?.expiring_soon ?? expiringData?.length ?? 0,
-        total_equipment: statsData?.total_equipment ?? 0,
-        equipment_alerts: statsData?.equipment_alerts ?? 0,
-        active_experiments: statsData?.active_experiments ?? 0,
+        low_stock: Math.max(statsData?.low_stock ?? 0, lowStockArr.length),
+        expiring_soon: Math.max(statsData?.expiring_soon ?? 0, expiringArr.length),
+        total_equipment: totalEquipment ?? 0,
+        equipment_alerts: equipmentAlerts ?? 0,
+        active_experiments: activeExperiments ?? 0,
       });
 
       // Real activity from audit logs

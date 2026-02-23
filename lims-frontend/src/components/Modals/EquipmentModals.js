@@ -340,7 +340,8 @@ const EquipmentFormModal = ({ isOpen, onClose, title, equipment = null, existing
                 <input type="text" name="name" value={formData.name} onChange={handleChange} style={styles.input} />
               </FormField>
             </div>
-            <div style={styles.row}>
+            {/* FIXED: Using row3 to include Status dropdown */}
+            <div style={styles.row3}>
               <FormField label="Type" required>
                 <select name="type_" value={formData.type_} onChange={handleChange} style={styles.select}>
                   <option value="instrument">Instrument</option>
@@ -353,6 +354,13 @@ const EquipmentFormModal = ({ isOpen, onClose, title, equipment = null, existing
               </FormField>
               <FormField label="Quantity" required>
                 <input type="number" name="quantity" value={formData.quantity} onChange={handleChange} min="1" style={styles.input} />
+              </FormField>
+              <FormField label="Status" required>
+                <select name="status" value={formData.status} onChange={handleChange} style={styles.select}>
+                  {Object.entries(EQUIPMENT_STATUSES).map(([value, { label }]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
               </FormField>
             </div>
           </div>
@@ -419,19 +427,22 @@ export const PartFormModal = ({ equipmentId, part, existingImageUrl, onClose, on
         if (formData[k]?.trim()) payload[k] = formData[k].trim(); 
       });
       
+      // FIXED: Safely extracting part ID from API responses
       if (part) { 
         await api.updateEquipmentPart(equipmentId, part.id, payload);
         if (photo) {
           try { 
             await api.uploadEquipmentFile(equipmentId, photo, { file_type: 'photo', description: `Part: ${formData.name.trim()}`, part_id: part.id }); 
-          } catch (e) { console.error(e); }
+          } catch (e) { console.error("Photo upload failed:", e); }
         }
       } else {
         const created = await api.createEquipmentPart(equipmentId, payload);
-        if (photo && created?.id) {
+        const newPartId = created?.data?.id || created?.id;
+        
+        if (photo && newPartId) {
           try { 
-            await api.uploadEquipmentFile(equipmentId, photo, { file_type: 'photo', description: `Part: ${formData.name.trim()}`, part_id: created.id }); 
-          } catch (e) { console.error(e); }
+            await api.uploadEquipmentFile(equipmentId, photo, { file_type: 'photo', description: `Part: ${formData.name.trim()}`, part_id: newPartId }); 
+          } catch (e) { console.error("Photo upload failed:", e); }
         }
       }
       onSave();

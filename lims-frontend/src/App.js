@@ -175,7 +175,7 @@ const App = () => {
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard user={user} />;
+        return <Dashboard user={user} onNavigate={setCurrentPage} />;
       case 'reagents':
         return <Reagents user={user} />;
       case 'equipment':
@@ -187,7 +187,7 @@ const App = () => {
       case 'users':
         return <Users user={user} />;
       default:
-        return <Dashboard user={user} />;
+        return <Dashboard user={user} onNavigate={setCurrentPage} />;
     }
   };
 

@@ -397,9 +397,9 @@ pub async fn get_dashboard_stats(
         .await
         .unwrap_or((0,));
 
-    // Active experiments: in_progress + scheduled
+    // Active experiments: in_progress + planned
     let active_experiments: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM experiments WHERE status IN ('in_progress', 'scheduled')"
+        "SELECT COUNT(*) FROM experiments WHERE status IN ('in_progress', 'planned')"
     )
         .fetch_one(&app_state.db_pool)
         .await

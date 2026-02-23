@@ -207,19 +207,25 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    // ==================== EXPERIMENTS TABLE ====================
+   // ==================== EXPERIMENTS TABLE ====================
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS experiments (
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL CHECK(length(title) > 0 AND length(title) <= 255),
             description TEXT CHECK(description IS NULL OR length(description) <= 2000),
+            experiment_date DATETIME NOT NULL,
             status TEXT NOT NULL DEFAULT 'draft' CHECK(
                 status IN ('draft', 'planned', 'in_progress', 'completed', 'cancelled', 'on_hold')
             ),
             experiment_type TEXT NOT NULL DEFAULT 'research' CHECK(
                 experiment_type IN ('educational', 'research')
             ),
+            instructor TEXT CHECK(instructor IS NULL OR length(instructor) <= 255),
+            student_group TEXT CHECK(student_group IS NULL OR length(student_group) <= 100),
+            protocol TEXT CHECK(protocol IS NULL OR length(protocol) <= 2000),
+            results TEXT CHECK(results IS NULL OR length(results) <= 5000),
+            notes TEXT CHECK(notes IS NULL OR length(notes) <= 1000),
             start_date DATETIME,
             end_date DATETIME,
             location TEXT CHECK(location IS NULL OR length(location) <= 255),
@@ -682,7 +688,12 @@ async fn run_additional_migrations(pool: &SqlitePool) -> Result<()> {
         "ALTER TABLE experiments ADD COLUMN location TEXT CHECK(location IS NULL OR length(location) <= 255)",
         "ALTER TABLE experiments ADD COLUMN room_id TEXT REFERENCES rooms(id)",
         "ALTER TABLE experiments ADD COLUMN experiment_type TEXT NOT NULL DEFAULT 'research' CHECK(experiment_type IN ('educational', 'research'))",
-
+        "ALTER TABLE experiments ADD COLUMN experiment_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE experiments ADD COLUMN instructor TEXT CHECK(length(instructor) <= 255)",
+        "ALTER TABLE experiments ADD COLUMN student_group TEXT CHECK(length(student_group) <= 100)",
+        "ALTER TABLE experiments ADD COLUMN protocol TEXT CHECK(length(protocol) <= 2000)",
+        "ALTER TABLE experiments ADD COLUMN results TEXT CHECK(length(results) <= 5000)",
+        "ALTER TABLE experiments ADD COLUMN notes TEXT CHECK(length(notes) <= 1000)",
         // ==================== AUDIT_LOGS ====================
         "ALTER TABLE audit_logs ADD COLUMN description TEXT",
         "ALTER TABLE audit_logs ADD COLUMN changes TEXT",

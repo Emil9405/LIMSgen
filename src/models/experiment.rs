@@ -73,6 +73,7 @@ pub struct Experiment {
     pub instructor: Option<String>,
     pub student_group: Option<String>,
     pub location: Option<String>,
+    pub room_id: Option<String>,
     pub status: String, 
     pub protocol: Option<String>,  
     pub start_date: DateTime<Utc>, 
@@ -214,6 +215,7 @@ pub struct CreateExperimentRequest {
     pub student_group: Option<String>,
     #[validate(length(max = 255, message = "Location cannot exceed 255 characters"))]
     pub location: Option<String>,
+    pub room_id: Option<String>,
     #[validate(length(max = 2000, message = "Protocol cannot exceed 2000 characters"))]
     pub protocol: Option<String>,
     pub start_date: Option<DateTime<Utc>>,
@@ -264,6 +266,7 @@ pub struct UpdateExperimentRequest {
     pub student_group: Option<String>,
     #[validate(length(max = 255, message = "Location cannot exceed 255 characters"))]
     pub location: Option<String>,
+    pub room_id: Option<String>,
     pub status: Option<String>,
     #[validate(length(max = 2000, message = "Protocol cannot exceed 2000 characters"))]
     pub protocol: Option<String>,

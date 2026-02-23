@@ -120,6 +120,7 @@ use experiment_handlers::{
     add_reagent_to_experiment, get_experiment_reagents, remove_reagent_from_experiment,
     get_experiment_stats, start_experiment, complete_experiment, cancel_experiment,
     consume_experiment_reagent, auto_update_experiment_statuses,
+    run_auto_update_statuses, seconds_until_next_transition,
 };
 
 // Room handlers
@@ -937,6 +938,56 @@ async fn main() -> anyhow::Result<()> {
         start_maintenance_tasks(pool_clone).await;
     });
 
+    // Фоновая задача: авто-обновление статусов экспериментов (event-driven, не поллинг)
+    // Спрашивает у БД «через сколько секунд ближайшее событие?» и спит ровно до него.
+    // Если нет pending экспериментов — спит 5 минут и проверяет снова (на случай новых).
+    let experiment_pool = pool.clone();
+    tokio::spawn(async move {
+        use tokio::time::{sleep, Duration};
+
+        const MAX_IDLE_SECS: u64 = 300; // 5 мин — проверка если нет pending
+        const MIN_PAUSE_SECS: u64 = 2;  // Минимальная пауза (защита от busy loop)
+
+        sleep(Duration::from_secs(5)).await; // Даём серверу стартовать
+        log::info!("Experiment auto-update task started (event-driven, idle check: {}s)", MAX_IDLE_SECS);
+
+        loop {
+            // 1. Спрашиваем: сколько секунд до ближайшего перехода?
+            let sleep_secs = match seconds_until_next_transition(&experiment_pool).await {
+                Ok(Some(secs)) if secs <= 0 => {
+                    // Уже просрочено — обрабатываем сейчас
+                    match run_auto_update_statuses(&experiment_pool).await {
+                        Ok(r) if r.total_updated > 0 => {
+                            log::info!(
+                                "BG auto-update: {} started, {} completed (reagents consumed)",
+                                r.started, r.completed
+                            );
+                        }
+                        Err(e) => log::error!("BG auto-update error: {}", e),
+                        _ => {}
+                    }
+                    MIN_PAUSE_SECS // Короткая пауза, потом проверяем снова
+                }
+                Ok(Some(secs)) => {
+                    // Есть событие через N секунд — спим до него (+1 сек буфер)
+                    let wait = (secs as u64).min(MAX_IDLE_SECS) + 1;
+                    log::debug!("Next experiment transition in ~{}s, sleeping {}s", secs, wait);
+                    wait
+                }
+                Ok(None) => {
+                    // Нет pending экспериментов — спим долго
+                    MAX_IDLE_SECS
+                }
+                Err(e) => {
+                    log::error!("BG next-transition query error: {}", e);
+                    MAX_IDLE_SECS
+                }
+            };
+
+            sleep(Duration::from_secs(sleep_secs)).await;
+        }
+    });
+
     // Start JWT rotation background task
     let rotation_pool = pool.clone();
     let env_file = env::var("ENV_FILE").unwrap_or_else(|_| ".env".to_string());
@@ -1117,6 +1168,7 @@ async fn main() -> anyhow::Result<()> {
                             .route("/stats", web::get().to(get_experiment_stats))
                             .route("/filter", web::post().to(filter_handlers::get_experiments_filtered))
                             .route("/auto-update-statuses", web::post().to(auto_update_experiment_statuses_handler))
+                            .route("/diagnose-dates", web::get().to(experiment_handlers::diagnose_experiment_dates))
                             .route("/{id}", web::get().to(get_experiment))
                             .route("/{id}", web::put().to(update_experiment_protected))
                             .route("/{id}", web::delete().to(delete_experiment_protected))

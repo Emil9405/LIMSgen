@@ -209,10 +209,9 @@ pub async fn update_experiment(
         return Err(ApiError::not_found("Experiment"));
     }
     let existing = existing.unwrap();
-
     let now = Utc::now();
     
-    // Подготовка данных с учётом существующих значений
+    // Подготовка данных
     let title = update.title.as_ref().unwrap_or(&existing.title);
     let description = update.description.clone().or(existing.description.clone());
     let experiment_date = update.experiment_date.unwrap_or(existing.experiment_date);
@@ -221,16 +220,81 @@ pub async fn update_experiment(
     let student_group = update.student_group.clone().or(existing.student_group.clone());
     let status = update.status.as_ref().unwrap_or(&existing.status);
     let location = update.location.clone().or(existing.location.clone());
+    let room_id = update.room_id.clone().or(existing.room_id.clone());
     let protocol = update.protocol.clone().or(existing.protocol.clone());
     let results = update.results.clone().or(existing.results.clone());
     let notes = update.notes.clone().or(existing.notes.clone());
     let start_date = update.start_date.unwrap_or(existing.start_date);
     let end_date = update.end_date.or(existing.end_date);
 
+    // === ЖЕЛЕЗОБЕТОННОЕ АВТО-СПИСАНИЕ (в единой транзакции с обновлением) ===
+    let mut tx = app_state.db_pool.begin().await?;
+
+    if status == "completed" && existing.status != "completed" {
+        let reagents: Vec<ExperimentReagent> = sqlx::query_as(r#"
+            SELECT id, experiment_id, batch_id, planned_quantity, is_consumed, notes, created_at
+            FROM experiment_reagents 
+            WHERE experiment_id = ?
+        "#)
+            .bind(&experiment_id)
+            .fetch_all(&mut *tx)
+            .await?;
+
+        for reagent in reagents {
+            if !reagent.is_consumed {
+                let qty = reagent.planned_quantity.unwrap_or(0.0);
+                if qty > 0.0 {
+                    sqlx::query(r#"
+                        UPDATE batches 
+                        SET quantity = MAX(0, quantity - ?),
+                            reserved_quantity = MAX(0, reserved_quantity - ?)
+                        WHERE id = ?
+                    "#)
+                        .bind(qty)
+                        .bind(qty)
+                        .bind(&reagent.batch_id)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+
+                sqlx::query("UPDATE experiment_reagents SET is_consumed = 1 WHERE id = ?")
+                    .bind(&reagent.id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+    } else if status == "cancelled" && existing.status != "cancelled" {
+        let reagents: Vec<ExperimentReagent> = sqlx::query_as(r#"
+            SELECT id, experiment_id, batch_id, planned_quantity, is_consumed, notes, created_at
+            FROM experiment_reagents 
+            WHERE experiment_id = ?
+        "#)
+            .bind(&experiment_id)
+            .fetch_all(&mut *tx)
+            .await?;
+
+        for reagent in reagents {
+            if !reagent.is_consumed {
+                let qty = reagent.planned_quantity.unwrap_or(0.0);
+                if qty > 0.0 {
+                    sqlx::query(r#"
+                        UPDATE batches 
+                        SET reserved_quantity = MAX(0, reserved_quantity - ?)
+                        WHERE id = ?
+                    "#)
+                        .bind(qty)
+                        .bind(&reagent.batch_id)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+            }
+        }
+    }
+
     sqlx::query(r#"
         UPDATE experiments SET 
         title = ?, description = ?, experiment_date = ?, experiment_type = ?, 
-        instructor = ?, student_group = ?, status = ?, location = ?,
+        instructor = ?, student_group = ?, status = ?, location = ?, room_id = ?,
         protocol = ?, start_date = ?, end_date = ?, results = ?, notes = ?,
         updated_by = ?, updated_at = ?
         WHERE id = ?
@@ -243,6 +307,7 @@ pub async fn update_experiment(
         .bind(&student_group)
         .bind(status)
         .bind(&location)
+        .bind(&room_id)
         .bind(&protocol)
         .bind(&start_date)
         .bind(&end_date)
@@ -251,8 +316,10 @@ pub async fn update_experiment(
         .bind(&user_id)
         .bind(&now)
         .bind(&experiment_id)
-        .execute(&app_state.db_pool)
+        .execute(&mut *tx)
         .await?;
+
+    tx.commit().await?;
 
     let updated: Experiment = sqlx::query_as("SELECT * FROM experiments WHERE id = ?")
         .bind(&experiment_id)
@@ -270,33 +337,33 @@ pub async fn delete_experiment(
 ) -> ApiResult<HttpResponse> {
     let experiment_id = path.into_inner();
 
-    // Сначала удаляем связанные реагенты и возвращаем резервы
-    let reagents: Vec<ExperimentReagent> = sqlx::query_as(
-        "SELECT * FROM experiment_reagents WHERE experiment_id = ? AND is_consumed = 0"
-    )
+    let reagents: Vec<ExperimentReagent> = sqlx::query_as(r#"
+        SELECT id, experiment_id, batch_id, planned_quantity, is_consumed, notes, created_at
+        FROM experiment_reagents 
+        WHERE experiment_id = ? AND is_consumed = 0
+    "#)
         .bind(&experiment_id)
         .fetch_all(&app_state.db_pool)
         .await?;
 
     let mut tx = app_state.db_pool.begin().await?;
 
-    // Возвращаем зарезервированное количество
     for reagent in &reagents {
-        let qty = reagent.quantity_used.unwrap_or(0.0);
-        sqlx::query("UPDATE batches SET reserved_quantity = MAX(0, reserved_quantity - ?) WHERE id = ?")
-            .bind(qty)
-            .bind(&reagent.batch_id)
-            .execute(&mut *tx)
-            .await?;
+        let qty = reagent.planned_quantity.unwrap_or(0.0);
+        if qty > 0.0 {
+            sqlx::query("UPDATE batches SET reserved_quantity = MAX(0, reserved_quantity - ?) WHERE id = ?")
+                .bind(qty)
+                .bind(&reagent.batch_id)
+                .execute(&mut *tx)
+                .await?;
+        }
     }
 
-    // Удаляем связи реагентов
     sqlx::query("DELETE FROM experiment_reagents WHERE experiment_id = ?")
         .bind(&experiment_id)
         .execute(&mut *tx)
         .await?;
 
-    // Удаляем эксперимент
     let result = sqlx::query("DELETE FROM experiments WHERE id = ?")
         .bind(&experiment_id)
         .execute(&mut *tx)
@@ -389,7 +456,7 @@ pub struct ExperimentReagent {
     pub id: String,
     pub experiment_id: String,
     pub batch_id: String,
-    pub quantity_used: Option<f64>,
+    pub planned_quantity: Option<f64>,
     pub is_consumed: bool,
     pub notes: Option<String>,
     pub created_at: chrono::DateTime<Utc>,
@@ -429,7 +496,7 @@ pub async fn get_experiment_reagents(
     let reagents: Vec<ExperimentReagentWithDetails> = sqlx::query_as(r#"
         SELECT 
             er.id, er.experiment_id, er.batch_id, 
-            er.quantity_used, er.is_consumed, er.notes, er.created_at,
+            er.planned_quantity as quantity_used, er.is_consumed, er.notes, er.created_at,
             b.batch_number, b.unit, b.quantity as available_quantity,
             b.reagent_id, r.name as reagent_name
         FROM experiment_reagents er
@@ -473,8 +540,16 @@ pub async fn add_reagent_to_experiment(
         return Err(ApiError::bad_request("Cannot add reagents to completed or cancelled experiment"));
     }
 
+    #[derive(sqlx::FromRow)]
+    struct BatchInfo {
+        reagent_id: String,
+        unit: String,
+        quantity: f64,
+        reserved_quantity: f64,
+    }
+
     // Check batch exists and has enough quantity
-    let batch: Batch = sqlx::query_as("SELECT * FROM batches WHERE id = ?")
+    let batch: BatchInfo = sqlx::query_as("SELECT reagent_id, unit, quantity, reserved_quantity FROM batches WHERE id = ?")
         .bind(&body.batch_id)
         .fetch_one(&app_state.db_pool)
         .await
@@ -491,15 +566,21 @@ pub async fn add_reagent_to_experiment(
     let mut tx = app_state.db_pool.begin().await?;
 
     // Add reagent to experiment
-    sqlx::query(r#"
-        INSERT INTO experiment_reagents (id, experiment_id, batch_id, quantity_used, notes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+sqlx::query(r#"
+        INSERT INTO experiment_reagents (
+            id, experiment_id, reagent_id, batch_id, 
+            planned_quantity, unit, notes, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     "#)
         .bind(&id)
         .bind(&experiment_id)
+        .bind(&batch.reagent_id)
         .bind(&body.batch_id)
         .bind(body.quantity_used)
+        .bind(&batch.unit)
         .bind(&body.notes)
+        .bind(&now)
         .bind(&now)
         .execute(&mut *tx)
         .await?;
@@ -529,12 +610,12 @@ pub async fn remove_reagent_from_experiment(
     #[derive(sqlx::FromRow)]
     struct ReagentLink {
         batch_id: String,
-        quantity_used: Option<f64>,
+        planned_quantity: Option<f64>,
         is_consumed: bool,
     }
 
     let link: ReagentLink = sqlx::query_as(
-        "SELECT batch_id, quantity_used, is_consumed FROM experiment_reagents WHERE id = ? AND experiment_id = ?"
+        "SELECT batch_id, planned_quantity, is_consumed FROM experiment_reagents WHERE id = ? AND experiment_id = ?"
     )
         .bind(&reagent_link_id)
         .bind(&experiment_id)
@@ -555,7 +636,7 @@ pub async fn remove_reagent_from_experiment(
         .await?;
 
     // Unreserve quantity
-    let qty = link.quantity_used.unwrap_or(0.0);
+    let qty = link.planned_quantity.unwrap_or(0.0);
     sqlx::query("UPDATE batches SET reserved_quantity = MAX(0, reserved_quantity - ?) WHERE id = ?")
         .bind(qty)
         .bind(&link.batch_id)
@@ -614,6 +695,7 @@ pub async fn start_experiment(
     Ok(HttpResponse::Ok().json(ApiResponse::success(updated)))
 }
 
+
 /// Завершить эксперимент (in_progress -> completed) и израсходовать реагенты
 pub async fn complete_experiment(
     app_state: web::Data<Arc<AppState>>,
@@ -638,36 +720,46 @@ pub async fn complete_experiment(
 
     let mut tx = app_state.db_pool.begin().await?;
 
-    // Получаем все нерасходованные реагенты эксперимента
-    let reagents: Vec<ExperimentReagent> = sqlx::query_as(
-        "SELECT * FROM experiment_reagents WHERE experiment_id = ? AND is_consumed = 0"
-    )
+    // Явно указываем колонки, чтобы избежать ошибок маппинга
+    let reagents: Vec<ExperimentReagent> = sqlx::query_as(r#"
+        SELECT id, experiment_id, batch_id, planned_quantity, is_consumed, notes, created_at
+        FROM experiment_reagents 
+        WHERE experiment_id = ?
+    "#)
         .bind(&experiment_id)
         .fetch_all(&mut *tx)
         .await?;
 
-    // Для каждого реагента: списываем из batch и помечаем consumed
-    for reagent in &reagents {
-        let qty = reagent.quantity_used.unwrap_or(0.0);
-        
-        // Списываем количество из батча
-        sqlx::query(r#"
-            UPDATE batches 
-            SET quantity = MAX(0, quantity - ?),
-                reserved_quantity = MAX(0, reserved_quantity - ?)
-            WHERE id = ?
-        "#)
-            .bind(qty)
-            .bind(qty)
-            .bind(&reagent.batch_id)
-            .execute(&mut *tx)
-            .await?;
+    let mut consumed_count = 0;
 
-        // Помечаем как consumed
-        sqlx::query("UPDATE experiment_reagents SET is_consumed = 1 WHERE id = ?")
-            .bind(&reagent.id)
-            .execute(&mut *tx)
-            .await?;
+    // Проверяем статус is_consumed на стороне Rust (самый надежный способ)
+    for reagent in reagents {
+        if !reagent.is_consumed {
+            let qty = reagent.planned_quantity.unwrap_or(0.0);
+            
+            if qty > 0.0 {
+                // Списываем количество из батча
+                sqlx::query(r#"
+                    UPDATE batches 
+                    SET quantity = MAX(0, quantity - ?),
+                        reserved_quantity = MAX(0, reserved_quantity - ?)
+                    WHERE id = ?
+                "#)
+                    .bind(qty)
+                    .bind(qty)
+                    .bind(&reagent.batch_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+
+            // Помечаем как consumed
+            sqlx::query("UPDATE experiment_reagents SET is_consumed = 1 WHERE id = ?")
+                .bind(&reagent.id)
+                .execute(&mut *tx)
+                .await?;
+                
+            consumed_count += 1;
+        }
     }
 
     // Обновляем статус эксперимента
@@ -691,11 +783,11 @@ pub async fn complete_experiment(
         .await?;
 
     info!("User {} completed experiment: {} (consumed {} reagents)", 
-          user_id, experiment_id, reagents.len());
+          user_id, experiment_id, consumed_count);
     
     Ok(HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
         "experiment": updated,
-        "reagents_consumed": reagents.len()
+        "reagents_consumed": consumed_count
     }))))
 }
 
@@ -723,26 +815,35 @@ pub async fn cancel_experiment(
 
     let mut tx = app_state.db_pool.begin().await?;
 
-    // Получаем все нерасходованные реагенты
-    let reagents: Vec<ExperimentReagent> = sqlx::query_as(
-        "SELECT * FROM experiment_reagents WHERE experiment_id = ? AND is_consumed = 0"
-    )
+    let reagents: Vec<ExperimentReagent> = sqlx::query_as(r#"
+        SELECT id, experiment_id, batch_id, planned_quantity, is_consumed, notes, created_at
+        FROM experiment_reagents 
+        WHERE experiment_id = ?
+    "#)
         .bind(&experiment_id)
         .fetch_all(&mut *tx)
         .await?;
 
+    let mut returned_count = 0;
+
     // Возвращаем зарезервированное количество в батчи
-    for reagent in &reagents {
-        let qty = reagent.quantity_used.unwrap_or(0.0);
-        sqlx::query(r#"
-            UPDATE batches 
-            SET reserved_quantity = MAX(0, reserved_quantity - ?)
-            WHERE id = ?
-        "#)
-            .bind(qty)
-            .bind(&reagent.batch_id)
-            .execute(&mut *tx)
-            .await?;
+    for reagent in reagents {
+        if !reagent.is_consumed {
+            let qty = reagent.planned_quantity.unwrap_or(0.0);
+            if qty > 0.0 {
+                sqlx::query(r#"
+                    UPDATE batches 
+                    SET reserved_quantity = MAX(0, reserved_quantity - ?)
+                    WHERE id = ?
+                "#)
+                    .bind(qty)
+                    .bind(&reagent.batch_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            
+            returned_count += 1;
+        }
     }
 
     // Обновляем статус эксперимента
@@ -765,13 +866,14 @@ pub async fn cancel_experiment(
         .await?;
 
     info!("User {} cancelled experiment: {} (returned {} reagents)", 
-          user_id, experiment_id, reagents.len());
+          user_id, experiment_id, returned_count);
     
     Ok(HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
         "experiment": updated,
-        "reagents_returned": reagents.len()
+        "reagents_returned": returned_count
     }))))
 }
+
 
 /// Израсходовать конкретный реагент эксперимента
 pub async fn consume_experiment_reagent(
@@ -793,9 +895,11 @@ pub async fn consume_experiment_reagent(
         ));
     }
 
-    let reagent: ExperimentReagent = sqlx::query_as(
-        "SELECT * FROM experiment_reagents WHERE id = ? AND experiment_id = ?"
-    )
+    let reagent: ExperimentReagent = sqlx::query_as(r#"
+        SELECT id, experiment_id, batch_id, planned_quantity, is_consumed, notes, created_at
+        FROM experiment_reagents 
+        WHERE id = ? AND experiment_id = ?
+    "#)
         .bind(&reagent_link_id)
         .bind(&experiment_id)
         .fetch_one(&app_state.db_pool)
@@ -806,7 +910,12 @@ pub async fn consume_experiment_reagent(
         return Err(ApiError::bad_request("Reagent is already consumed"));
     }
 
-    let qty = reagent.quantity_used.unwrap_or(0.0);
+    let qty = reagent.planned_quantity.unwrap_or(0.0);
+    
+    if qty <= 0.0 {
+        return Err(ApiError::bad_request("Reagent has no quantity to consume"));
+    }
+    
     let mut tx = app_state.db_pool.begin().await?;
 
     // Списываем из батча
@@ -836,67 +945,177 @@ pub async fn consume_experiment_reagent(
         "quantity_consumed": qty
     }))))
 }
-
 // ==================== AUTO UPDATE STATUSES ====================
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct AutoUpdateResult {
     pub started: i32,
     pub completed: i32,
     pub total_updated: i32,
 }
 
-/// Автоматическое обновление статусов экспериментов на основе времени
+/// Сколько секунд до ближайшего события (для smart sleep в фоновой задаче).
+/// Возвращает None если нет pending экспериментов.
+pub async fn seconds_until_next_transition(pool: &sqlx::SqlitePool) -> Result<Option<i64>, sqlx::Error> {
+    // Один лёгкий запрос: MIN из ближайшего start и ближайшего end.
+    // datetime() нормализует любой формат даты перед сравнением.
+    let row: Option<i64> = sqlx::query_scalar(r#"
+        SELECT MIN(seconds) FROM (
+            SELECT CAST((julianday(datetime(start_date)) - julianday(datetime('now'))) * 86400 AS INTEGER) as seconds
+            FROM experiments
+            WHERE status = 'planned' AND start_date IS NOT NULL
+            UNION ALL
+            SELECT CAST((julianday(datetime(end_date)) - julianday(datetime('now'))) * 86400 AS INTEGER) as seconds
+            FROM experiments
+            WHERE status = 'in_progress' AND end_date IS NOT NULL
+        )
+    "#)
+        .fetch_one(pool)
+        .await?;
+
+    Ok(row)
+}
+
+/// Standalone логика авто-обновления.
+/// Вызывается и из HTTP-хендлера, и из фоновой задачи.
+/// КЛЮЧЕВОЙ ФИX: datetime() нормализует формат дат перед сравнением.
+/// Без этого SQLite сравнивает даты как текст и "2025-01-01T09:00:00Z" > "2025-01-01 12:00:00+00:00"
+/// потому что 'T' (0x54) > ' ' (0x20) в ASCII.
+pub async fn run_auto_update_statuses(pool: &sqlx::SqlitePool) -> Result<AutoUpdateResult, sqlx::Error> {
+    let now = Utc::now();
+    let mut tx = pool.begin().await?;
+
+    // 1. planned → in_progress (пришло время start_date)
+    // datetime() нормализует оба операнда в "YYYY-MM-DD HH:MM:SS"
+    let started_result = sqlx::query(r#"
+        UPDATE experiments
+        SET status = 'in_progress', updated_at = ?
+        WHERE status = 'planned'
+          AND start_date IS NOT NULL
+          AND datetime(start_date) <= datetime(?)
+    "#)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+
+    let started = started_result.rows_affected() as i32;
+
+    // 2. in_progress → completed (пришло время end_date)
+    let to_complete: Vec<String> = sqlx::query_scalar(r#"
+        SELECT id FROM experiments
+        WHERE status = 'in_progress'
+          AND end_date IS NOT NULL
+          AND datetime(end_date) <= datetime(?)
+    "#)
+        .bind(&now)
+        .fetch_all(&mut *tx)
+        .await?;
+
+    let completed = to_complete.len() as i32;
+
+    // 3. Для каждого завершаемого — списываем реагенты
+    for exp_id in &to_complete {
+        let reagents: Vec<ExperimentReagent> = sqlx::query_as(r#"
+            SELECT id, experiment_id, batch_id, planned_quantity, is_consumed, notes, created_at
+            FROM experiment_reagents
+            WHERE experiment_id = ? AND is_consumed = 0
+        "#)
+            .bind(exp_id)
+            .fetch_all(&mut *tx)
+            .await?;
+
+        for reagent in reagents {
+            let qty = reagent.planned_quantity.unwrap_or(0.0);
+            if qty > 0.0 {
+                sqlx::query(r#"
+                    UPDATE batches
+                    SET quantity = MAX(0, quantity - ?),
+                        reserved_quantity = MAX(0, reserved_quantity - ?)
+                    WHERE id = ?
+                "#)
+                    .bind(qty)
+                    .bind(qty)
+                    .bind(&reagent.batch_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            sqlx::query("UPDATE experiment_reagents SET is_consumed = 1 WHERE id = ?")
+                .bind(&reagent.id)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        sqlx::query(r#"
+            UPDATE experiments
+            SET status = 'completed', updated_at = ?
+            WHERE id = ?
+        "#)
+            .bind(&now)
+            .bind(exp_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    tx.commit().await?;
+
+    let total_updated = started + completed;
+    if total_updated > 0 {
+        info!("Auto-updated: {} started, {} completed (reagents consumed)", started, completed);
+    }
+
+    Ok(AutoUpdateResult { started, completed, total_updated })
+}
+
+/// HTTP-хендлер (обёртка)
 pub async fn auto_update_experiment_statuses(
     app_state: web::Data<Arc<AppState>>,
 ) -> ApiResult<HttpResponse> {
-    let now = Utc::now();
-    
-    let mut tx = app_state.db_pool.begin().await?;
-    
-    // planned -> in_progress (start_date прошла)
-    let started_result = sqlx::query(r#"
-        UPDATE experiments 
-        SET status = 'in_progress', updated_at = ?
-        WHERE status = 'planned' 
-          AND start_date IS NOT NULL 
-          AND start_date <= ?
-    "#)
-        .bind(&now)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await?;
-    
-    let started = started_result.rows_affected() as i32;
-    
-    // in_progress -> completed (end_date прошла)
-    let completed_result = sqlx::query(r#"
-        UPDATE experiments 
-        SET status = 'completed', updated_at = ?
-        WHERE status = 'in_progress' 
-          AND end_date IS NOT NULL 
-          AND end_date <= ?
-    "#)
-        .bind(&now)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await?;
-    
-    let completed = completed_result.rows_affected() as i32;
-    
-    tx.commit().await?;
-    
-    let total_updated = started + completed;
-    
-    if total_updated > 0 {
-        info!("Auto-updated experiment statuses: {} started, {} completed", started, completed);
+    let result = run_auto_update_statuses(&app_state.db_pool)
+        .await
+        .map_err(|e| ApiError::InternalServerError(format!("Auto-update failed: {}", e)))?;
+
+    Ok(HttpResponse::Ok().json(ApiResponse::success(result)))
+}
+
+/// Диагностика дат — показывает как хранятся даты и почему сравнение может не работать
+pub async fn diagnose_experiment_dates(
+    app_state: web::Data<Arc<AppState>>,
+) -> ApiResult<HttpResponse> {
+    #[derive(Debug, Serialize, sqlx::FromRow)]
+    struct DateDiag {
+        id: String,
+        title: String,
+        status: String,
+        start_date_raw: Option<String>,
+        end_date_raw: Option<String>,
+        start_date_normalized: Option<String>,
+        end_date_normalized: Option<String>,
+        now_normalized: Option<String>,
+        start_overdue: Option<i32>,
+        end_overdue: Option<i32>,
     }
-    
-    Ok(HttpResponse::Ok().json(ApiResponse::success(AutoUpdateResult {
-        started,
-        completed,
-        total_updated,
-    })))
+
+    let diags: Vec<DateDiag> = sqlx::query_as(r#"
+        SELECT
+            id,
+            title,
+            status,
+            start_date as start_date_raw,
+            end_date as end_date_raw,
+            datetime(start_date) as start_date_normalized,
+            datetime(end_date) as end_date_normalized,
+            datetime('now') as now_normalized,
+            CASE WHEN datetime(start_date) <= datetime('now') THEN 1 ELSE 0 END as start_overdue,
+            CASE WHEN end_date IS NOT NULL AND datetime(end_date) <= datetime('now') THEN 1 ELSE 0 END as end_overdue
+        FROM experiments
+        WHERE status IN ('planned', 'in_progress')
+        ORDER BY start_date ASC
+    "#)
+        .fetch_all(&app_state.db_pool)
+        .await?;
+
+    Ok(HttpResponse::Ok().json(ApiResponse::success(diags)))
 }
 
 // ==================== CALENDAR ====================
