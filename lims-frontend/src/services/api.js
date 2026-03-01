@@ -1,7 +1,7 @@
 // src/services/api.js
 // v7.2: Fixed Auth + Optimized Pagination Support
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
+const API_BASE_URL = process.env.REACT_APP_API_URL || '';;
 const API_V1_BASE = `${API_BASE_URL}/api/v1`;
 
 // ==================== HELPERS ====================
