@@ -8,6 +8,9 @@ import Badge from './Badge';
 import Button from './Button';
 import Input from './Input';
 import Select from './Select';
+import { PlacementSummary } from './Modals/PlacementComponents';
+
+import { useRooms } from './hooks/useRooms';
 
 import {
   CreateReagentModal,
@@ -187,7 +190,7 @@ const ReagentAccordionItem = ({
   const [batches, setBatches] = useState([]);
   const [loadingBatches, setLoadingBatches] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
-
+  const { rooms } = useRooms();
   const [showCreateBatch, setShowCreateBatch] = useState(false);
   const [showEditBatch, setShowEditBatch] = useState(false);
   const [showUsageHistory, setShowUsageHistory] = useState(false);
@@ -488,7 +491,8 @@ const ReagentAccordionItem = ({
                       const inputPacks = hasPackSize && inputQty > 0 ? Math.floor(inputQty / batch.pack_size) : 0;
                       
                       return (
-                          <div key={batch.id} style={accordionStyles.batchCard}>
+                        <React.Fragment key={batch.id}>
+                          <div style={accordionStyles.batchCard}>
                             <div style={accordionStyles.batchValue}>{batch.batch_number}</div>
                             <div style={accordionStyles.batchValue}>{batch.quantity} {batch.unit}</div>
                             
@@ -642,10 +646,23 @@ const ReagentAccordionItem = ({
                               {canEdit && <Button size="small" variant="secondary" onClick={() => { setSelectedBatch(batch); setShowEditBatch(true); }} icon={<EditIcon size={14} />}>Edit</Button>}
                               {canDeleteBatch && <Button size="small" variant="danger" onClick={() => handleDeleteBatch(batch)} icon={<TrashIcon size={14} />}>Delete</Button>}
                             </div>
+                            
                           </div>
+                            {batch.placements && batch.placements.length > 0 && (
+                            <PlacementSummary
+                              batch={batch}
+                              rooms={rooms}
+                              onRefresh={() => loadBatches(reagent.id)}
+                              readOnly={false}
+                            />
+                          )}
+                          </React.Fragment>
+                          
                       );
                     })}
+                    
                   </div>
+                  
               )}
 
               {showCreateBatch && <CreateBatchModal isOpen={showCreateBatch} reagentId={reagent.id} reagentName={reagent.name} onClose={() => setShowCreateBatch(false)} onSave={handleBatchCreated} />}

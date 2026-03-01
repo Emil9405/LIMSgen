@@ -4,6 +4,7 @@
 
 // 1. Объявляем модули
 pub mod batch;
+pub mod batch_placement;
 pub mod equipment;
 pub mod experiment;
 pub mod reagent;
@@ -12,6 +13,7 @@ pub mod user;
 
 // 2. Ре-экспортируем содержимое (Re-export), чтобы структуры были доступны как crate::models::StructName
 pub use batch::*;
+pub use batch_placement::*;
 pub use equipment::*;
 pub use experiment::*;
 pub use reagent::*;

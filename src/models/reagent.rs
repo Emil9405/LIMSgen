@@ -28,6 +28,9 @@ pub struct Reagent {
     pub updated_by: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[sqlx(default)]
+    pub deleted_at: Option<DateTime<Utc>>,
+
 }
 
 #[derive(Debug, Deserialize, Validate, Clone)]
@@ -120,6 +123,7 @@ pub struct ReagentWithStock {
     pub updated_by: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
     // Stock fields
     pub total_quantity: f64,
     pub batches_count: i64,
@@ -164,6 +168,7 @@ impl From<Reagent> for ReagentWithStock {
             reserved_quantity: 0.0,
             available_quantity: r.total_quantity,
             total_display,
+            deleted_at: r.deleted_at,
         }
     }
 }

@@ -183,7 +183,7 @@ pub async fn get_batches_filtered(
             r.name as reagent_name,
             CAST(julianday(b.expiry_date) - julianday('now') AS INTEGER) as days_until_expiry
         FROM batches b
-        LEFT JOIN reagents r ON b.reagent_id = r.id
+        LEFT JOIN reagents r ON b.reagent_id = r.id AND r.deleted_at IS NULL
     "#;
 
     let mut conditions: Vec<String> = vec!["1=1".to_string()];
@@ -243,7 +243,7 @@ pub async fn get_batches_filtered(
 
     // Подсчёт общего количества
     let count_sql = format!(
-        "SELECT COUNT(*) FROM batches b LEFT JOIN reagents r ON b.reagent_id = r.id WHERE {}",
+        "SELECT COUNT(*) FROM batches b LEFT JOIN reagents r ON b.reagent_id = r.id WHERE {} AND r.deleted_at IS NULL",
         conditions.join(" AND ")
     );
     

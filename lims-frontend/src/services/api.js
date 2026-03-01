@@ -1,7 +1,7 @@
 // src/services/api.js
 // v7.2: Fixed Auth + Optimized Pagination Support
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || '';;
+const API_BASE_URL = process.env.REACT_APP_API_URL || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:8080');
 const API_V1_BASE = `${API_BASE_URL}/api/v1`;
 
 // ==================== HELPERS ====================
@@ -398,6 +398,50 @@ export const api = {
             method: 'POST',
             body: JSON.stringify(usageData),
         });
+    },
+
+// ==================== BATCH PLACEMENTS ====================
+
+    getPlacements: async (batchId) => {
+        const response = await apiCall(`${API_V1_BASE}/batches/${batchId}/placements`);
+        return response;
+    },
+
+    createPlacement: async (batchId, data) => {
+        return await apiCall(`${API_V1_BASE}/batches/${batchId}/placements`, {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    },
+
+    updatePlacement: async (batchId, placementId, data) => {
+        return await apiCall(`${API_V1_BASE}/batches/${batchId}/placements/${placementId}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    },
+
+    deletePlacement: async (batchId, placementId) => {
+        return await apiCall(`${API_V1_BASE}/batches/${batchId}/placements/${placementId}`, {
+            method: 'DELETE',
+        });
+    },
+
+    movePlacement: async (batchId, data) => {
+        return await apiCall(`${API_V1_BASE}/batches/${batchId}/placements/move`, {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    },
+
+    getRoomInventory: async (roomId) => {
+        const response = await apiCall(`${API_V1_BASE}/rooms/${roomId}/inventory`);
+        return response;
+    },
+
+    getRoomPlacements: async (roomId) => {
+        const response = await apiCall(`${API_V1_BASE}/rooms/${roomId}/placements`);
+        return response;
     },
 
     useReagent: async (reagentId, batchId, usageData) => api.useBatch(reagentId, batchId, usageData),

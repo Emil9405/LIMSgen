@@ -26,6 +26,8 @@ import { PrintStickerModal, PrinterIcon } from './PrintComponents';
 import { CreateBatchModal, EditBatchModal } from './BatchModals';
 import { UsageHistoryModal } from './UsageHistoryModal';
 import { BatchUsageInput } from './BatchUsageInput';
+import { PlacementSummary } from './PlacementComponents';
+import { useRooms } from '../hooks/useRooms';
 
 // ==================== CreateReagentModal (with first batch) ====================
 
@@ -205,8 +207,8 @@ export const CreateReagentModal = ({ isOpen, onClose, onSave }) => {
               <FormGroup label="Pack Size" hint="Amount per pack (for counting packs)">
                 <Input 
                   type="number" 
-                  step="0.01"
-                  min="0.001"
+                  step="any"
+                  min="0"
                   name="pack_size" 
                   value={batchData.pack_size} 
                   onChange={handleBatchChange}
@@ -389,6 +391,8 @@ export const ViewReagentModal = ({ isOpen, onClose, reagent, onEdit }) => {
   const [showUsageHistory, setShowUsageHistory] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [selectedBatch, setSelectedBatch] = useState(null);
+  const { rooms } = useRooms();
+
 
   const loadBatches = useCallback(async () => {
     if (!reagent?.id) return;
@@ -607,10 +611,16 @@ export const ViewReagentModal = ({ isOpen, onClose, reagent, onEdit }) => {
               label: 'Expiry Date', 
               render: i => i.expiry_date ? new Date(i.expiry_date).toLocaleDateString() : '—' 
             },
-            { 
-              key: 'storage_location', 
-              label: 'Location', 
-              render: i => i.storage_location || i.location || '—' 
+            {
+              key: 'placements',
+              label: 'Location',
+              render: batch => (
+                <PlacementSummary
+                  batch={batch}
+                  rooms={rooms}
+                  onRefresh={loadBatches}
+                />
+              )
             },
             {
               key: 'actions', 

@@ -141,7 +141,7 @@ pub async fn get_reagent_with_batches(
 ) -> ApiResult<HttpResponse> {
     let reagent_id = path.into_inner();
 
-    let reagent: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ?")
+    let reagent: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ? AND deleted_at IS NULL")
         .bind(&reagent_id)
         .fetch_one(&app_state.db_pool)
         .await
@@ -197,7 +197,7 @@ pub async fn use_reagent(
     let claims = get_current_user(&http_request)?;
     validate_quantity(request.quantity_used)?;
 
-    let reagent: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ?")
+    let reagent: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ? AND deleted_at IS NULL")
         .bind(&reagent_id)
         .fetch_one(&app_state.db_pool)
         .await
@@ -291,7 +291,7 @@ pub async fn get_usage_history(
     let (reagent_id, batch_id) = path.into_inner();
     let (page, per_page, offset) = query.normalize();
 
-    let _reagent: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ?")
+    let _reagent: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ? AND deleted_at IS NULL")
         .bind(&reagent_id)
         .fetch_one(&app_state.db_pool)
         .await
@@ -363,20 +363,21 @@ pub async fn get_dashboard_stats(
         active_experiments: i64,
     }
 
-    let total_reagents: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM reagents WHERE status = 'active'")
+    let total_reagents: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM reagents WHERE status = 'active' AND deleted_at IS NULL")
         .fetch_one(&app_state.db_pool)
         .await?;
 
-    let total_batches: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM batches")
+    let total_batches: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM batches WHERE deleted_at IS NULL")
         .fetch_one(&app_state.db_pool)
         .await?;
 
-    let low_stock: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM batches WHERE quantity <= 10 AND status = 'available'")
+    let low_stock: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM batches WHERE quantity <= 10 AND status = 'available' AND deleted_at IS NULL AND reagent_id NOT IN (SELECT id FROM reagents WHERE deleted_at IS NOT NULL)")
         .fetch_one(&app_state.db_pool)
         .await?;
 
     let expiring_soon: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM batches WHERE expiry_date IS NOT NULL AND expiry_date <= datetime('now', '+30 days') AND status = 'available'"
+        "SELECT COUNT(*) FROM batches WHERE expiry_date IS NOT NULL AND expiry_date <= datetime('now', '+30 days') AND status = 'available' AND deleted_at IS NULL AND reagent_id NOT IN (SELECT id FROM reagents WHERE deleted_at IS NOT NULL)"
     )
         .fetch_one(&app_state.db_pool)
         .await?;

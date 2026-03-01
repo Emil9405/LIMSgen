@@ -249,7 +249,7 @@ async fn preload_users(pool: &SqlitePool) -> ApiResult<HashMap<String, String>> 
 
 /// Preload all reagents into HashMap (name lowercase -> id)
 async fn preload_reagents(pool: &SqlitePool) -> ApiResult<HashMap<String, String>> {
-    let rows = sqlx::query("SELECT name, id FROM reagents")
+    let rows = sqlx::query("SELECT name, id FROM reagents WHERE deleted_at IS NULL")
         .fetch_all(pool)
         .await
         .map_err(|e| ApiError::InternalServerError(format!("Failed to preload reagents: {}", e)))?;
@@ -622,7 +622,7 @@ async fn import_reagents_logic(pool: &SqlitePool, reagents: Vec<ReagentImportDto
 
 pub async fn export_reagents(app_state: web::Data<Arc<AppState>>) -> ApiResult<HttpResponse> {
     let whitelist = FieldWhitelist::for_reagents();
-    let builder = SafeQueryBuilder::new("SELECT * FROM reagents")
+    let builder = SafeQueryBuilder::new("SELECT * FROM reagents WHERE deleted_at IS NULL")
         .map_err(|e| ApiError::InternalServerError(e))?
         .with_whitelist(&whitelist);
     

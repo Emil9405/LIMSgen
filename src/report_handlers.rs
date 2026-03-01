@@ -289,7 +289,7 @@ const BASE_REPORT_QUERY: &str = r#"
                  ELSE 'ok'
             END as expiration_status
         FROM batches b
-        JOIN reagents r ON b.reagent_id = r.id
+        JOIN reagents r ON b.reagent_id = r.id AND r.deleted_at IS NULL
     )
     SELECT * FROM batch_data
 "#;

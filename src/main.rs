@@ -56,6 +56,7 @@ mod models;
 mod monitoring;
 mod jwt_rotation;
 pub mod validator;
+mod placement_handlers;
 pub mod repositories;
 pub mod query_builders;
 mod reagent_handlers;
@@ -70,6 +71,7 @@ use auth::{AuthService, jwt_middleware};
 
 use auth_handlers::{change_user_password, delete_user, create_user, get_roles};
 use crate::audit::ChangeSet;
+
 
 // Handlers - only common utilities and specific functions
 use handlers::{
@@ -397,7 +399,7 @@ async fn delete_reagent_protected(
     // Fetch info before deletion
     let mut cs = ChangeSet::new();
     if let Ok(old) = sqlx::query_as::<_, (String, Option<String>, Option<String>, String)>(
-        "SELECT name, cas_number, manufacturer, status FROM reagents WHERE id = ?"
+        "SELECT name, cas_number, manufacturer, status FROM reagents WHERE id = ? AND deleted_at IS NULL"
     ).bind(&reagent_id).fetch_one(&app_state.db_pool).await {
         cs.deleted("name", &old.0);
         if let Some(ref cas) = old.1 { cs.deleted("cas_number", cas); }
@@ -405,7 +407,7 @@ async fn delete_reagent_protected(
         cs.deleted("status", &old.3);
     }
 
-    let response = reagent_handlers::delete_reagent(app_state.clone(), web::Path::from(reagent_id.clone())).await?;
+    let response = reagent_handlers::delete_reagent(app_state.clone(), web::Path::from(reagent_id.clone()), claims.sub.clone()).await?;
     audit::audit_with_changes(
         &app_state.db_pool, &claims.sub, "delete", "reagent", &reagent_id,
         &format!("Deleted reagent: {}", cs.to_description()),
@@ -870,6 +872,55 @@ async fn delete_room_protected(
     Ok(response)
 }
 
+// ==================== PLACEMENT PROTECTED WRAPPERS ====================
+
+async fn create_placement_protected(
+    app_state: web::Data<Arc<AppState>>,
+    path: web::Path<String>,
+    request: web::Json<crate::models::batch_placement::CreatePlacementRequest>,
+    http_request: HttpRequest,
+) -> error::ApiResult<HttpResponse> {
+    auth_handlers::check_batch_permission_async(
+        &http_request, auth_handlers::BatchAction::Edit, &app_state.db_pool
+    ).await?;
+    placement_handlers::create_placement(app_state, path, request, http_request).await
+}
+
+async fn update_placement_protected(
+    app_state: web::Data<Arc<AppState>>,
+    path: web::Path<(String, String)>,
+    request: web::Json<crate::models::batch_placement::UpdatePlacementRequest>,
+    http_request: HttpRequest,
+) -> error::ApiResult<HttpResponse> {
+    auth_handlers::check_batch_permission_async(
+        &http_request, auth_handlers::BatchAction::Edit, &app_state.db_pool
+    ).await?;
+    placement_handlers::update_placement(app_state, path, request, http_request).await
+}
+
+async fn delete_placement_protected(
+    app_state: web::Data<Arc<AppState>>,
+    path: web::Path<(String, String)>,
+    http_request: HttpRequest,
+) -> error::ApiResult<HttpResponse> {
+    auth_handlers::check_batch_permission_async(
+        &http_request, auth_handlers::BatchAction::Delete, &app_state.db_pool
+    ).await?;
+    placement_handlers::delete_placement(app_state, path, http_request).await
+}
+
+async fn move_placement_protected(
+    app_state: web::Data<Arc<AppState>>,
+    path: web::Path<String>,
+    request: web::Json<crate::models::batch_placement::MovePlacementRequest>,
+    http_request: HttpRequest,
+) -> error::ApiResult<HttpResponse> {
+    auth_handlers::check_batch_permission_async(
+        &http_request, auth_handlers::BatchAction::Edit, &app_state.db_pool
+    ).await?;
+    placement_handlers::move_placement(app_state, path, request, http_request).await
+}
+
 // ==================== STUB HANDLERS FOR MISSING FUNCTIONS ====================
 
 // FIXED: Add logout stub handler
@@ -1093,6 +1144,11 @@ async fn main() -> anyhow::Result<()> {
                             .route("/import", web::post().to(import_batches))
                             .route("/import/json", web::post().to(import_batches_json))
                             .route("/import/excel", web::post().to(import_batches_excel))
+                            .route("/{batch_id}/placements", web::get().to(placement_handlers::get_batch_placements))
+                            .route("/{batch_id}/placements", web::post().to(create_placement_protected))
+                            .route("/{batch_id}/placements/move", web::post().to(move_placement_protected))
+                            .route("/{batch_id}/placements/{placement_id}", web::put().to(update_placement_protected))
+                            .route("/{batch_id}/placements/{placement_id}", web::delete().to(delete_placement_protected))
                     )
 
                     // Reagents
@@ -1158,6 +1214,8 @@ async fn main() -> anyhow::Result<()> {
                             .route("/{id}", web::get().to(get_room))
                             .route("/{id}", web::put().to(update_room_protected))
                             .route("/{id}", web::delete().to(delete_room_protected))
+                            .route("/{id}/inventory", web::get().to(placement_handlers::get_room_inventory))
+                            .route("/{id}/placements", web::get().to(placement_handlers::get_room_placements))
                     )
 
                     // Experiments

@@ -114,6 +114,7 @@ pub struct ReagentListItem {
     pub total_quantity: f64,
     pub batches_count: i64,
     pub primary_unit: Option<String>,
+    
 }
 
 #[derive(Debug, Serialize)]
@@ -157,6 +158,7 @@ struct StockAggregation {
     pub expiring_soon_count: i64,
     pub expired_count: i64,
     pub primary_unit: Option<String>,
+   
 }
 
 // ==================== MAIN GET REAGENTS ====================
@@ -193,6 +195,9 @@ pub async fn get_reagents(
                  updated_at, total_quantity, batches_count, primary_unit")
         .sort(sort_by, sort_order)
         .limit(per_page);
+        
+    // Exclude soft-deleted reagents
+    builder.add_raw_condition("deleted_at IS NULL");
 
     // ===== SEARCH FILTER (FTS с fallback на LIKE) =====
     // Поддержка обоих параметров: search и q (для совместимости с фронтендом)
@@ -341,6 +346,7 @@ pub async fn search_reagents(
                       updated_at, total_quantity, batches_count, primary_unit
                FROM reagents
                WHERE rowid IN (SELECT rowid FROM reagents_fts WHERE reagents_fts MATCH ?)
+               AND deleted_at IS NULL
                ORDER BY total_quantity DESC
                LIMIT ?"#
         )
@@ -357,6 +363,7 @@ pub async fn search_reagents(
                       updated_at, total_quantity, batches_count, primary_unit
                FROM reagents
                WHERE name LIKE ? OR cas_number LIKE ? OR formula LIKE ?
+               AND deleted_at IS NULL
                ORDER BY total_quantity DESC
                LIMIT ?"#
         )
@@ -380,7 +387,7 @@ pub async fn get_reagent_by_id(
     let id = path.into_inner();
     let pool = &app_state.db_pool;
 
-    let reagent: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ?")
+    let reagent: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ? AND deleted_at IS NULL")
         .bind(&id)
         .fetch_optional(pool)
         .await?
@@ -511,7 +518,7 @@ pub async fn update_reagent(
 
     body.validate().map_err(|e| ApiError::bad_request(&e.to_string()))?;
 
-    let _: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ?")
+    let _: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ? AND deleted_at IS NULL")
         .bind(&id)
         .fetch_optional(pool)
         .await?
@@ -573,38 +580,38 @@ pub async fn update_reagent(
     )))
 }
 
-// ==================== DELETE ====================
+
+// ==================== DELETE (SOFT) ====================
 
 pub async fn delete_reagent(
     app_state: web::Data<Arc<AppState>>,
     path: web::Path<String>,
+    user_id: String,
 ) -> ApiResult<HttpResponse> {
     let id = path.into_inner();
     let pool = &app_state.db_pool;
 
-    let _: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ?")
+    let _: Reagent = sqlx::query_as("SELECT * FROM reagents WHERE id = ? AND deleted_at IS NULL")
         .bind(&id)
         .fetch_optional(pool)
         .await?
         .ok_or_else(|| ApiError::not_found("Reagent"))?;
 
-    // Проверяем наличие батчей
-    let (batch_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM batches WHERE reagent_id = ? AND deleted_at IS NULL")
-        .bind(&id)
-        .fetch_one(pool)
-        .await?;
-
-    if batch_count > 0 {
-        return Err(ApiError::bad_request(&format!(
-            "Cannot delete reagent with {} existing batches. Delete batches first.",
-            batch_count
-        )));
-    }
-
-    sqlx::query("DELETE FROM reagents WHERE id = ?")
+    // Soft delete — устанавливаем deleted_at
+    sqlx::query("UPDATE reagents SET deleted_at = datetime('now'), updated_by = ?, status = 'inactive' WHERE id = ?")
+        .bind(&user_id)
         .bind(&id)
         .execute(pool)
         .await?;
+
+    // Soft delete всех батчей этого реагента (если ещё не удалены)
+    sqlx::query("UPDATE batches SET deleted_at = datetime('now'), updated_by = ? WHERE reagent_id = ? AND deleted_at IS NULL")
+        .bind(&user_id)
+        .bind(&id)
+        .execute(pool)
+        .await?;
+
+    log::info!("🗑️ Reagent {} soft-deleted by user {}", id, user_id);
 
     Ok(HttpResponse::Ok().json(ApiResponse::success_with_message(
         serde_json::json!({"id": id}),

@@ -149,6 +149,29 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     )
         .execute(pool)
         .await?;
+// ==================== BATCH PLACEMENTS ====================
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS batch_placements (
+            id TEXT PRIMARY KEY,
+            batch_id TEXT NOT NULL,
+            room_id TEXT NOT NULL,
+            shelf TEXT CHECK(shelf IS NULL OR length(shelf) <= 100),
+            position TEXT CHECK(position IS NULL OR length(position) <= 100),
+            quantity REAL NOT NULL CHECK(quantity > 0),
+            notes TEXT CHECK(notes IS NULL OR length(notes) <= 500),
+            placed_by TEXT,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            FOREIGN KEY (batch_id) REFERENCES batches(id) ON DELETE CASCADE,
+            FOREIGN KEY (room_id) REFERENCES rooms(id),
+            FOREIGN KEY (placed_by) REFERENCES users(id),
+            UNIQUE(batch_id, room_id, shelf)
+        )
+        "#
+    )
+    .execute(pool)
+    .await?;
 
     // ==================== EQUIPMENT TABLE ====================
     sqlx::query(
@@ -653,6 +676,7 @@ async fn run_additional_migrations(pool: &SqlitePool) -> Result<()> {
         "ALTER TABLE reagents ADD COLUMN total_quantity REAL NOT NULL DEFAULT 0.0",
         "ALTER TABLE reagents ADD COLUMN batches_count INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE reagents ADD COLUMN primary_unit TEXT",
+        
 
         // ==================== EQUIPMENT ====================
         "ALTER TABLE equipment ADD COLUMN serial_number TEXT CHECK(serial_number IS NULL OR length(serial_number) <= 100)",
@@ -682,7 +706,10 @@ async fn run_additional_migrations(pool: &SqlitePool) -> Result<()> {
         "ALTER TABLE batches ADD COLUMN reserved_quantity REAL NOT NULL DEFAULT 0.0 CHECK(reserved_quantity >= 0)",
         "ALTER TABLE batches ADD COLUMN pack_size REAL CHECK(pack_size IS NULL OR pack_size > 0)",
         "ALTER TABLE batches ADD COLUMN deleted_at DATETIME",
-
+        
+        // ==================== REAGENTS SOFT DELETE ====================
+        "ALTER TABLE reagents ADD COLUMN deleted_at DATETIME",
+        
         // ==================== EXPERIMENTS ====================
         "ALTER TABLE experiment_reagents ADD COLUMN is_consumed INTEGER NOT NULL DEFAULT 0 CHECK(is_consumed IN (0, 1))",
         "ALTER TABLE experiments ADD COLUMN location TEXT CHECK(location IS NULL OR length(location) <= 255)",
@@ -697,11 +724,16 @@ async fn run_additional_migrations(pool: &SqlitePool) -> Result<()> {
         // ==================== AUDIT_LOGS ====================
         "ALTER TABLE audit_logs ADD COLUMN description TEXT",
         "ALTER TABLE audit_logs ADD COLUMN changes TEXT",
+        "ALTER TABLE usage_logs ADD COLUMN placement_id TEXT REFERENCES batch_placements(id)",
 
         // ==================== ROOMS ====================
         "ALTER TABLE rooms ADD COLUMN color TEXT CHECK(color IS NULL OR length(color) <= 20)",
         "ALTER TABLE rooms ADD COLUMN created_by TEXT REFERENCES users(id)",
         "ALTER TABLE rooms ADD COLUMN updated_by TEXT REFERENCES users(id)",
+        // ==================== BATCH PLACEMENTS IDEXES ====================
+        "CREATE INDEX IF NOT EXISTS idx_placements_batch ON batch_placements(batch_id)",
+        "CREATE INDEX IF NOT EXISTS idx_placements_room ON batch_placements(room_id)",
+        "CREATE INDEX IF NOT EXISTS idx_placements_batch_room ON batch_placements(batch_id, room_id)",
     ];
 
     for query in migration_queries.iter() {
@@ -750,6 +782,7 @@ pub async fn reset_database(pool: &SqlitePool) -> Result<()> {
         "DROP TABLE IF EXISTS users",
         "DROP TABLE IF EXISTS reagent_stock_cache",
         "DROP TABLE IF EXISTS reagent_count_cache",
+        "DROP TABLE IF EXISTS batch_placements",
     ];
 
     for query in drop_queries.iter() {

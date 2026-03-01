@@ -51,6 +51,10 @@ pub struct BatchResponse {
     pub converted_unit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub original_unit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placements: Option<Vec<PlacementWithRoom>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unplaced_quantity: Option<f64>,
 }
 
 /// Партия с именем реагента
@@ -251,40 +255,86 @@ pub async fn get_all_batches(
     let batches: Vec<BatchWithReagent> = select_query.fetch_all(&app_state.db_pool).await?;
 
     // Transform to response with expiration status
-    let response_batches: Vec<BatchWithReagentResponse> = batches
-        .into_iter()
-        .map(|b| {
-            let (expiration_status, days_until_expiration) = calculate_expiration_status(b.expiry_date);
-            let pack_count = calculate_pack_count(b.quantity, b.pack_size);
-            BatchWithReagentResponse {
-                id: b.id,
-                reagent_id: b.reagent_id,
-                reagent_name: b.reagent_name,
-                lot_number: b.lot_number,
-                batch_number: b.batch_number,
-                cat_number: b.cat_number,
-                quantity: b.quantity,
-                original_quantity: b.original_quantity,
-                reserved_quantity: b.reserved_quantity,
-                unit: b.unit,
-                pack_size: b.pack_size,
-                pack_count,
-                expiry_date: b.expiry_date,
-                supplier: b.supplier,
-                manufacturer: b.manufacturer,
-                received_date: b.received_date,
-                status: b.status,
-                location: b.location,
-                notes: b.notes,
-                created_at: b.created_at,
-                updated_at: b.updated_at,
-                expiration_status,
-                days_until_expiration,
-            }
-        })
-        .collect();
+    // Загрузка placements для всех батчей одним запросом
+let batch_ids: Vec<&str> = batches.iter().map(|b| b.id.as_str()).collect();
+let placements_map = if !batch_ids.is_empty() {
+    let placeholders = batch_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        r#"SELECT 
+            bp.id, bp.batch_id, bp.room_id,
+            r.name as room_name, r.color as room_color,
+            bp.shelf, bp.position, bp.quantity,
+            bp.notes, bp.placed_by,
+            bp.created_at, bp.updated_at
+        FROM batch_placements bp
+        JOIN rooms r ON bp.room_id = r.id
+        WHERE bp.batch_id IN ({})
+        ORDER BY r.name, bp.shelf"#,
+        placeholders
+    );
+    let mut query = sqlx::query_as::<_, PlacementWithRoom>(&sql);
+    for id in &batch_ids {
+        query = query.bind(id);
+    }
+    let all_placements: Vec<PlacementWithRoom> = query
+        .fetch_all(&app_state.db_pool)
+        .await
+        .unwrap_or_default();
 
-    let total_pages = (total + per_page - 1) / per_page;
+    // Группируем по batch_id
+    let mut map: std::collections::HashMap<String, Vec<PlacementWithRoom>> =
+        std::collections::HashMap::new();
+    for p in all_placements {
+        map.entry(p.batch_id.clone()).or_default().push(p);
+    }
+    map
+} else {
+    std::collections::HashMap::new()
+};
+
+let response_batches: Vec<BatchResponse> = batches
+    .into_iter()
+    .map(|b| {
+        let (expiration_status, days_until_expiration) = calculate_expiration_status(b.expiry_date);
+        let pack_count = calculate_pack_count(b.quantity, b.pack_size);
+        let batch_placements = placements_map.get(&b.id).cloned().unwrap_or_default();
+        let placed_qty: f64 = batch_placements.iter().map(|p| p.quantity).sum();
+        let unplaced = (b.quantity - placed_qty).max(0.0);
+
+        BatchResponse {
+            id: b.id,
+            reagent_id: b.reagent_id,
+            lot_number: b.lot_number,
+            batch_number: b.batch_number,
+            cat_number: b.cat_number,
+            quantity: b.quantity,
+            original_quantity: b.original_quantity,
+            reserved_quantity: b.reserved_quantity,
+            unit: b.unit,
+            pack_size: b.pack_size,
+            pack_count,
+            expiry_date: b.expiry_date,
+            supplier: b.supplier,
+            manufacturer: b.manufacturer,
+            received_date: b.received_date,
+            status: b.status,
+            location: b.location,
+            notes: b.notes,
+            created_by: b.created_by,
+            updated_by: b.updated_by,
+            created_at: b.created_at,
+            updated_at: b.updated_at,
+            expiration_status,
+            days_until_expiration,
+            converted_quantity: None,
+            converted_unit: None,
+            original_unit: None,
+            placements: if batch_placements.is_empty() { None } else { Some(batch_placements) },
+            unplaced_quantity: Some(unplaced),
+        }
+    })
+    .collect();
+        let total_pages = (total + per_page - 1) / per_page;
 
     Ok(HttpResponse::Ok().json(ApiResponse::success(PaginatedResponse {
         data: response_batches,
@@ -294,7 +344,6 @@ pub async fn get_all_batches(
         total_pages,
     })))
 }
-
 /// Получить одну партию по ID
 pub async fn get_batch(
     app_state: web::Data<Arc<AppState>>,
@@ -355,6 +404,8 @@ pub async fn get_batch(
         converted_quantity: None,
         converted_unit: None,
         original_unit: None,
+        placements: None,
+        unplaced_quantity: None,
     };
 
     Ok(HttpResponse::Ok().json(ApiResponse::success(response)))
@@ -455,6 +506,8 @@ pub async fn create_batch(
         converted_quantity: None,
         converted_unit: None,
         original_unit: None,
+        placements: None,
+        unplaced_quantity: None,
     };
 
     Ok(HttpResponse::Created().json(ApiResponse::success(response)))
@@ -554,6 +607,8 @@ pub async fn update_batch(
         converted_quantity: None,
         converted_unit: None,
         original_unit: None,
+        placements: None,
+        unplaced_quantity: None,
     };
 
     Ok(HttpResponse::Ok().json(ApiResponse::success(response)))
@@ -853,6 +908,8 @@ pub async fn get_batches_for_reagent(
                 converted_quantity: None,
                 converted_unit: None,
                 original_unit: None,
+                placements: None,
+                unplaced_quantity: None,
             }
         })
         .collect();
